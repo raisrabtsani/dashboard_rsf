@@ -198,7 +198,72 @@ foreign key.
   mengikutkannya dalam total) — ikuti §8 & BR-15 di [../PRD.md](../PRD.md), dan kunci
   keputusannya dengan test.
 
-## 6. Satuan uang: rupiah penuh di DB, juta di tampilan
+## 6. Autentikasi & lingkup akses data
+
+### Login username, alur lain dimatikan
+
+- Login memakai **`username`**, bukan email. Kolom `email` nullable dan **tidak dipakai
+  di UI** — jangan menambahkannya ke form mana pun.
+- Yang hidup hanya **login, logout, ganti password**. Registrasi publik, reset password
+  via email, verifikasi email, konfirmasi password, update profil, dan hapus akun sendiri
+  **sudah dihapus** — akun dikelola admin lewat `/admin/users`.
+- [`Auth\DisabledAuthFeaturesTest`](tests/Feature/Auth/DisabledAuthFeaturesTest.php)
+  mengunci semuanya (404 + nama route tidak terdaftar). Kalau test itu tiba-tiba merah,
+  ada yang menghidupkan kembali alur mati — jangan "perbaiki" dengan melonggarkan test.
+
+### Tiga level akses
+
+`role` (`admin`/`user`) + `tipe` (`RO`/`BO`/`SBO`/`UNIT`/`KK`) dipetakan oleh accessor
+[`User::access_level`](app/Models/User.php):
+
+| role / tipe        | access_level   | Lingkup                                     |
+| ------------------ | -------------- | ------------------------------------------- |
+| role `admin`       | `LEVEL_ALL`    | semua data, semua filter bebas              |
+| tipe `RO`          | `LEVEL_ALL`    | semua data, tapi **bukan** admin            |
+| tipe `BO`          | `LEVEL_CABANG` | terkunci 1 cabang, drill-down uker diizinkan |
+| tipe `SBO`/`UNIT`/`KK` | `LEVEL_UKER` | terkunci 1 uker                            |
+
+Aturan penting: **default-nya `LEVEL_UKER`** (tersempit). Tipe kosong atau tak dikenal
+tidak boleh berujung melihat semua data. Kalau menambah tipe baru, tambahkan ke `match`
+secara eksplisit — jangan mengandalkan cabang `default`.
+
+`access_level` di-`$appends` ke model, dan ikut dikirim di props Inertia `auth.user`
+(payload-nya **dikurasi** di `HandleInertiaRequests`, bukan seluruh model).
+
+### `scope` — penegakan ada di backend
+
+Middleware [`EnforceUserScope`](app/Http/Middleware/EnforceUserScope.php) (alias `scope`)
+**menulis ulang** `area_id`/`cabang_id`/`uker_id` di Request **sebelum** controller
+membacanya. Nilai kiriman klien dibuang dan diganti milik user sendiri.
+
+- **Semua route dashboard & `api/*` wajib berada di grup `['auth', 'scope']`.** Route
+  dashboard di luar grup itu = kebocoran data lintas kantor.
+  `ScopeEnforcementTest::test_semua_route_dashboard_memakai_middleware_scope` menjaganya.
+- **Endpoint dashboard wajib membaca filter dari Request**, bukan dari `auth()->user()`.
+  Membaca dari Request = otomatis ikut terkunci. Membaca user langsung = melewati gerbang.
+- Middleware menimpa **query bag dan request bag sekaligus**. `merge()` saja tidak cukup:
+  untuk GET ia hanya menyentuh query, untuk POST hanya request — sisanya masih memuat
+  nilai kiriman klien dan terbaca lewat `$request->query()`/`$request->post()`.
+- Akun berlevel sempit tapi datanya cacat (BO tanpa `cabang_id`, uker tanpa `uker_id`)
+  **ditolak 403**, bukan dibiarkan lolos tanpa filter — "tanpa filter" justru artinya
+  membuka semua data.
+- Penyembunyian filter di frontend hanya **kosmetik/UX**. Jangan pernah menjadikannya
+  satu-satunya pengaman.
+
+### `admin` — gerbang area Admin
+
+[`AdminMiddleware`](app/Http/Middleware/AdminMiddleware.php) (alias `admin`) memeriksa
+**role**, bukan `access_level`: user RO berlevel `LEVEL_ALL` (boleh lihat semua data) tapi
+**tidak** boleh mengelola upload, RKA, dan user.
+
+### Menguji perubahan keamanan
+
+Test lingkup akses harus **menyerang dari sisi klien** — kirim `cabang_id` milik kantor
+lain lewat query string dan body, lalu pastikan balasan tetap lingkup sendiri. Setelah
+menulisnya, lumpuhkan sebentar middleware-nya dan pastikan test itu **benar-benar merah**;
+test keamanan yang tetap hijau saat pengamannya dicabut tidak menjaga apa pun.
+
+## 7. Satuan uang: rupiah penuh di DB, juta di tampilan
 
 - Semua nilai uang **disimpan dalam rupiah penuh** di database. Importer tidak boleh
   membagi apa pun sebelum menyimpan.
@@ -212,7 +277,7 @@ foreign key.
 - `Satuan::toJuta(null)` mengembalikan `null`, bukan `0`. Bulan/tanggal tanpa data
   bermakna "tidak ada data" dan harus tetap `null` sampai ke chart.
 
-## 7. Test & portabilitas query
+## 8. Test & portabilitas query
 
 - Jalankan `php artisan test` **sebelum dan sesudah** setiap perubahan backend. Kalau
   sebelum-nya sudah merah, itu informasi penting — jangan mulai menumpuk perubahan di atas
@@ -241,7 +306,7 @@ foreign key.
 - Setiap domain dashboard mendapat feature test sebagai jaring pengaman perilaku, dan
   setiap formula bisnis (lihat §11 PRD) dikunci minimal satu test.
 
-## 8. Format kode & gerbang CI
+## 9. Format kode & gerbang CI
 
 - Backend diformat **Laravel Pint** dengan house style terkunci di
   [`pint.json`](pint.json). Jalankan `./vendor/bin/pint` sebelum commit.
@@ -254,7 +319,7 @@ foreign key.
 - Kalau sebuah aturan Pint terasa salah, ubah `pint.json` lalu format ulang seluruh repo
   dalam satu commit terpisah — jangan menambah pengecualian per file.
 
-## 9. Environment
+## 10. Environment
 
 - [`.env.example`](.env.example) **wajib ada dan ter-track git** — CI menyalinnya jadi
   `.env`. `.gitignore` memakai pola `.env.*` dengan negasi `!.env.example` tepat di
@@ -268,7 +333,7 @@ foreign key.
   - `SESSION_LIFETIME=10` (idle timeout 10 menit)
 - Jangan pernah commit `.env`, dump database, atau file sumber berisi data nasabah.
 
-## 10. Struktur direktori
+## 11. Struktur direktori
 
 ```
 app/
@@ -291,11 +356,13 @@ routes/web.php               halaman + endpoint api/*
 tests/Feature|Unit/
 ```
 
-## 11. Definition of done (perubahan backend)
+## 12. Definition of done (perubahan backend)
 
 1. `php artisan test` hijau (dan dijalankan juga **sebelum** mulai).
 2. `./vendor/bin/pint` sudah dijalankan; `pint --test` bersih.
 3. Tidak ada query di controller, tidak ada axios di komponen.
+4. Route dashboard/`api/*` baru berada di grup `['auth', 'scope']`, dan endpoint-nya
+   membaca filter dari Request (bukan dari `auth()->user()`).
 4. Tidak ada `MONTH()`/`YEAR()` mentah atau fungsi khusus MySQL lain.
 5. Tidak ada pembagian 1.000.000 di luar `Satuan`, tidak ada literal `855` di luar
    `Region::OFFICE_ID`.

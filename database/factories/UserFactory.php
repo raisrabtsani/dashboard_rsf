@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -19,26 +20,60 @@ class UserFactory extends Factory
     /**
      * Define the model's default state.
      *
+     * Default-nya user level uker (paling sempit) supaya test yang lupa
+     * menetapkan tipe tidak diam-diam mendapat akses penuh.
+     *
      * @return array<string, mixed>
      */
     public function definition(): array
     {
         return [
             'name' => fake()->name(),
-            'email' => fake()->unique()->safeEmail(),
-            'email_verified_at' => now(),
+            'username' => fake()->unique()->userName(),
+            'email' => null,
+            'email_verified_at' => null,
             'password' => static::$password ??= Hash::make('password'),
+            'role' => User::ROLE_USER,
+            'tipe' => User::TIPE_UNIT,
+            'cabang_id' => null,
+            'uker_id' => null,
             'remember_token' => Str::random(10),
         ];
     }
 
-    /**
-     * Indicate that the model's email address should be unverified.
-     */
-    public function unverified(): static
+    public function admin(): static
     {
         return $this->state(fn (array $attributes) => [
-            'email_verified_at' => null,
+            'role' => User::ROLE_ADMIN,
+            'tipe' => User::TIPE_RO,
+        ]);
+    }
+
+    public function ro(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'role' => User::ROLE_USER,
+            'tipe' => User::TIPE_RO,
+        ]);
+    }
+
+    public function bo(int $cabangId): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'role' => User::ROLE_USER,
+            'tipe' => User::TIPE_BO,
+            'cabang_id' => $cabangId,
+            'uker_id' => $cabangId,
+        ]);
+    }
+
+    public function uker(int $cabangId, int $ukerId, string $tipe = User::TIPE_UNIT): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'role' => User::ROLE_USER,
+            'tipe' => $tipe,
+            'cabang_id' => $cabangId,
+            'uker_id' => $ukerId,
         ]);
     }
 }

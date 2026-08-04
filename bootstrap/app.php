@@ -16,7 +16,12 @@ return Application::configure(basePath: dirname(__DIR__))
             Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
         ]);
 
-        //
+        $middleware->alias([
+            // Gerbang area Admin — role admin saja.
+            'admin' => App\Http\Middleware\AdminMiddleware::class,
+            // Penegakan lingkup data; wajib dipasang di SEMUA route dashboard.
+            'scope' => App\Http\Middleware\EnforceUserScope::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
         //
