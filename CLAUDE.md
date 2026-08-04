@@ -160,11 +160,12 @@ untuk tabel master, dan jangan mengurutkan/mengasumsikan id berurutan.
   Ganti CSV-nya, jalankan ulang seeder. Jangan menambah array di seeder.
 - Seeder **idempoten** (`upsert` dengan primary key manual) — aman dijalankan berulang,
   tanpa truncate. Jangan menambahkan `truncate()` ke seeder master.
-- File master diekspor dari Excel dan **ber-BOM UTF-8**; pembaca CSV melucuti BOM di
-  kolom pertama. Kalau menambah importer CSV baru, tangani hal yang sama — kalau tidak,
-  nama kolom pertama terbaca sebagai `\u{FEFF}id_region`.
-- Kolom wajib divalidasi saat baca; file yang strukturnya berubah harus **gagal keras**
-  dengan pesan jelas, bukan diam-diam menghasilkan master kosong.
+- Semua pembacaan CSV lewat satu helper: [`App\Support\Csv::baca()`](app/Support/Csv.php).
+  **Jangan menulis `fgetcsv()` sendiri** di seeder/importer baru. Helper itu sudah
+  menangani BOM UTF-8 (file diekspor dari Excel — tanpa dilucuti, nama kolom pertama
+  terbaca `\u{FEFF}id_region`), validasi kolom wajib, dan baris ragged.
+- File yang strukturnya berubah **gagal keras** dengan pesan jelas, bukan diam-diam
+  menghasilkan tabel kosong.
 
 ### Tipe uker diturunkan, tidak ada di sumber
 
@@ -249,6 +250,38 @@ membacanya. Nilai kiriman klien dibuang dan diganti milik user sendiri.
   membuka semua data.
 - Penyembunyian filter di frontend hanya **kosmetik/UX**. Jangan pernah menjadikannya
   satu-satunya pengaman.
+
+### Seeding akun: `UserSeeder` vs `users:sync`
+
+Akun berasal dari `database/seeders/data/user.csv` (kolom `id_region`, `id_cabang`,
+`id_uker`, `User`, `Nama`, `Type Uker`, `Role`, `Password`). Logika baca & normalisasinya
+terpusat di [`UserCsvImportService`](app/Services/UserCsvImportService.php) — dipakai
+seeder **dan** command, supaya aturannya tidak bercabang dua.
+
+| Jalur | Perilaku | Kapan dipakai |
+| --- | --- | --- |
+| `UserSeeder` (`db:seed`) | **TRUNCATE** + bulk insert | inisialisasi awal, dev/test |
+| `php artisan users:sync` | upsert per `username`, tanpa truncate | **pemutakhiran produksi** |
+
+- **Jangan menjalankan `db:seed` di produksi.** `UserSeeder` menghapus semua akun beserta
+  password yang sudah diganti user. Pemutakhiran daftar kantor/nama → `users:sync`.
+- `users:sync` sengaja **tidak** memasukkan `password` ke daftar kolom yang di-update:
+  user baru dapat password dari CSV, user lama passwordnya tidak tersentuh. Kalau nanti
+  menambah kolom baru ke tabel users, tambahkan ke daftar update — **kecuali** `password`.
+- `UserSeeder` wajib dipanggil **setelah** `MasterSeeder`: `users.cabang_id`/`uker_id`
+  punya foreign key ke `cabang`/`uker`.
+- **Hash dihitung sekali per password unik**, bukan per baris. Semua akun memakai password
+  seragam, jadi ini memangkas 259 pemanggilan bcrypt jadi satu (di `BCRYPT_ROUNDS=12`
+  bedanya ~78 detik vs ~5 detik untuk seluruh `migrate:fresh --seed`). Pola yang sama
+  berlaku untuk importer massal lain.
+- Normalisasi `Type Uker` → `users.tipe`: `Unit` → `UNIT`, `Kantor Kas` → `KK`,
+  `RO`/`BO`/`SBO` apa adanya. Nilai yang tak dikenali **melempar exception** — tipe
+  menentukan `access_level`, jadi menebak di sini sama dengan menebak seberapa banyak data
+  yang boleh dilihat orang.
+- `cabang_id`/`uker_id` diambil **apa adanya** dari file (RO = 855/855, BO
+  `id_cabang == id_uker`, uker pakai `id_uker`-nya). Jangan menurunkannya ulang dari nama.
+- Password default `RSF12345` hanya **fallback** untuk sel `Password` yang kosong; nilai
+  di file yang menang. ⚠️ Password seragam ter-commit di CSV adalah risiko yang diketahui.
 
 ### `admin` — gerbang area Admin
 
@@ -339,13 +372,15 @@ test keamanan yang tetap hijau saat pengamannya dicabut tidak menjaga apa pun.
 app/
   Http/Controllers/          <Domain>DashboardController (tipis), Admin/*
   Http/Middleware/           AdminMiddleware, EnforceUserScope, …
-  Models/                    Region, Area, Cabang, Uker + model domain
-  Services/                  <Domain>Service — query & kalkulasi
-  Support/                   Satuan.php (satuan uang), Bulan.php (rencana: konstanta bulan)
+  Console/Commands/          users:sync, import:* (CLI operasional)
+  Models/                    Region, Area, Cabang, Uker, User + model domain
+  Services/                  <Domain>Service — query & kalkulasi; *CsvImportService
+  Support/                   Satuan.php (satuan uang), Csv.php (pembaca CSV bersama)
 database/
   migrations/                skema; dilarang edit migration lama in-place
   seeders/MasterSeeder.php   master organisasi — baca CSV, jangan hardcode
-  seeders/data/*.csv         code_region.csv, code_uker.csv, peta_area.csv
+  seeders/UserSeeder.php     akun massal (TRUNCATE — produksi pakai users:sync)
+  seeders/data/*.csv         code_region, code_uker, peta_area, user
 resources/js/
   Pages/<Domain>Dashboard/   halaman Inertia
   Layouts/                   DashboardLayout.vue (layout tunggal)

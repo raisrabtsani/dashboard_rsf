@@ -6,6 +6,7 @@ use App\Models\Area;
 use App\Models\Cabang;
 use App\Models\Region;
 use App\Models\Uker;
+use App\Support\Csv;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -228,71 +229,11 @@ class MasterSeeder extends Seeder
     }
 
     /**
-     * Baca CSV jadi list array asosiatif berdasarkan baris header.
-     *
      * @param  list<string>  $kolomWajib
      * @return Collection<int, array<string, string>>
      */
     private function bacaCsv(string $namaFile, array $kolomWajib): Collection
     {
-        $path = __DIR__.'/data/'.$namaFile;
-
-        if (! is_file($path)) {
-            throw new RuntimeException("File master tidak ditemukan: {$path}");
-        }
-
-        $handle = fopen($path, 'r');
-
-        if ($handle === false) {
-            throw new RuntimeException("File master tidak bisa dibuka: {$path}");
-        }
-
-        $header = null;
-        $baris = collect();
-
-        try {
-            while (($kolom = fgetcsv($handle, escape: '')) !== false) {
-                // Baris kosong.
-                if ($kolom === [null] || $kolom === []) {
-                    continue;
-                }
-
-                if ($header === null) {
-                    // File master diekspor dari Excel: buang BOM UTF-8 di kolom pertama,
-                    // kalau tidak nama kolom pertama jadi "\u{FEFF}id_region".
-                    $kolom[0] = preg_replace('/^\x{FEFF}/u', '', (string) $kolom[0]);
-                    $header = array_map(trim(...), $kolom);
-
-                    $hilang = array_diff($kolomWajib, $header);
-
-                    if ($hilang !== []) {
-                        throw new RuntimeException(sprintf(
-                            'Kolom %s tidak ada di %s (kolom terbaca: %s).',
-                            implode(', ', $hilang),
-                            $namaFile,
-                            implode(', ', $header),
-                        ));
-                    }
-
-                    continue;
-                }
-
-                if (count($kolom) !== count($header)) {
-                    $this->command?->warn("Baris dilewati di {$namaFile} (jumlah kolom tidak cocok): ".implode(',', $kolom));
-
-                    continue;
-                }
-
-                $baris->push(array_combine($header, $kolom));
-            }
-        } finally {
-            fclose($handle);
-        }
-
-        if ($header === null) {
-            throw new RuntimeException("File master kosong: {$path}");
-        }
-
-        return $baris;
+        return Csv::baca(__DIR__.'/data/'.$namaFile, $kolomWajib);
     }
 }

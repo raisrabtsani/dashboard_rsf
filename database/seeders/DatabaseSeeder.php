@@ -8,15 +8,18 @@ class DatabaseSeeder extends Seeder
 {
     /**
      * Seed the application's database.
+     *
+     * Urutannya mengikat: users.cabang_id & users.uker_id punya foreign key ke
+     * tabel cabang & uker, jadi MasterSeeder wajib lebih dulu.
+     *
+     * Catatan: UserSeeder melakukan TRUNCATE tabel users. Untuk pemutakhiran
+     * akun di produksi pakai `php artisan users:sync`, bukan `db:seed`.
      */
     public function run(): void
     {
         $this->call([
             MasterSeeder::class,
+            UserSeeder::class,
         ]);
-
-        // Catatan: pembuatan "Test User" bawaan Breeze sengaja dihapus supaya
-        // `db:seed` tetap idempoten (email unik akan bentrok saat dijalankan
-        // ulang). Akun sungguhan diseed lewat UserSeeder — lihat PRD F14.4.
     }
 }
