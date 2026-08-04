@@ -123,7 +123,82 @@ Pola endpoint standar tiap domain: `GET /filter-options`, `/snapshot`, `/chart`,
 `/branch`, `/cabang/{areaId}`, `/uker/{cabangId}`. Nama method controller seragam
 (`getSnapshot`, `getChart`, …) supaya domain baru bisa disalin dari domain yang sudah ada.
 
-## 5. Satuan uang: rupiah penuh di DB, juta di tampilan
+## 5. Master organisasi: hierarki, ID manual, dan seeder berbasis CSV
+
+Hierarki **Region → Cabang → Uker**, dengan **Area** sebagai dimensi menyilang yang
+menempel di level cabang. Satu cabang punya **`region_id` DAN `area_id`** sekaligus:
+`region_id` = garis organisasi, `area_id` = pengelompokan yang dipakai filter dashboard
+(filter memakai dimensi **Area → Cabang → Uker**, bukan Region).
+
+| Tabel    | Model    | Sumber data                                                                      |
+| -------- | -------- | -------------------------------------------------------------------------------- |
+| `region` | `Region` | `code_region.csv`                                                                |
+| `areas`  | `Area`   | pasangan unik (`id_area`, `Nama Area`) di `peta_area.csv`                        |
+| `cabang` | `Cabang` | tiap `id_cabang` unik di `code_uker.csv`; `area_id` di-join lewat `peta_area.csv` |
+| `uker`   | `Uker`   | tiap baris `code_uker.csv`                                                       |
+
+### ID manual — bukan auto-increment
+
+ID region, cabang, dan uker **berasal dari sistem sumber BRI**, bukan dari database.
+Migration memakai `$table->unsignedInteger('id')->primary()` (tanpa `id()`/`increments()`),
+dan setiap model master menyetel:
+
+```php
+public $incrementing = false;
+protected $keyType = 'int';
+```
+
+Konsekuensi yang gampang terlewat: **jangan pernah pakai `factory()` tanpa `id` eksplisit**
+untuk tabel master, dan jangan mengurutkan/mengasumsikan id berurutan.
+
+### Seeder master WAJIB membaca CSV
+
+[`MasterSeeder`](database/seeders/MasterSeeder.php) membaca ketiga file di
+`database/seeders/data/` **secara langsung**. Aturannya:
+
+- **Dilarang meng-hardcode baris master di dalam kode PHP.** Ada cabang/uker baru?
+  Ganti CSV-nya, jalankan ulang seeder. Jangan menambah array di seeder.
+- Seeder **idempoten** (`upsert` dengan primary key manual) — aman dijalankan berulang,
+  tanpa truncate. Jangan menambahkan `truncate()` ke seeder master.
+- File master diekspor dari Excel dan **ber-BOM UTF-8**; pembaca CSV melucuti BOM di
+  kolom pertama. Kalau menambah importer CSV baru, tangani hal yang sama — kalau tidak,
+  nama kolom pertama terbaca sebagai `\u{FEFF}id_region`.
+- Kolom wajib divalidasi saat baca; file yang strukturnya berubah harus **gagal keras**
+  dengan pesan jelas, bukan diam-diam menghasilkan master kosong.
+
+### Tipe uker diturunkan, tidak ada di sumber
+
+`code_uker.csv` tidak punya kolom tipe. Tipe diturunkan lewat
+[`Uker::tipeDari()`](app/Models/Uker.php) dan **urutan pemeriksaannya penting**:
+
+| Kondisi                   | Tipe   |
+| ------------------------- | ------ |
+| `id_uker == id_cabang`    | `BO`   |
+| nama diawali `SBO `       | `SBO`  |
+| nama diawali `Unit `      | `UNIT` |
+| nama diawali `KK `        | `KK`   |
+
+Baris BO dikenali dari **id**, bukan nama — jangan dibalik. Nama yang tak cocok pola mana
+pun akan diperingatkan di output seeder dan jatuh ke `UNIT` (paling tidak berbahaya secara
+akses); perbaiki datanya, jangan diamkan peringatannya.
+
+### Rollup Region Office `855`
+
+`855` adalah entitas rollup Region, **sengaja tidak ada di `code_uker.csv`** karena bukan
+kantor operasional. Tapi data kelolaan level Region (mis. Pinjaman segmen **Medium**)
+memakai `cabang_id = 855`, jadi seeder **wajib** membuat baris bayangan di `cabang` **dan**
+`uker` (tipe `REGION`) dari `code_region.csv` — tanpa itu import tersebut gagal validasi
+foreign key.
+
+- Angka 855 punya **sumber tunggal**: [`Region::OFFICE_ID`](app/Models/Region.php).
+  Dilarang menulis `855` sebagai literal di service, controller, atau komponen.
+- 855 **disembunyikan** dari dropdown BO dan tabel "Kinerja Cabang" lewat scope
+  `tanpaRegionOffice()` di `Cabang` dan `Uker`.
+- Perlakuan per domain **berbeda-beda** (ada yang mengecualikan 855, ada yang justru
+  mengikutkannya dalam total) — ikuti §8 & BR-15 di [../PRD.md](../PRD.md), dan kunci
+  keputusannya dengan test.
+
+## 6. Satuan uang: rupiah penuh di DB, juta di tampilan
 
 - Semua nilai uang **disimpan dalam rupiah penuh** di database. Importer tidak boleh
   membagi apa pun sebelum menyimpan.
@@ -137,7 +212,7 @@ Pola endpoint standar tiap domain: `GET /filter-options`, `/snapshot`, `/chart`,
 - `Satuan::toJuta(null)` mengembalikan `null`, bukan `0`. Bulan/tanggal tanpa data
   bermakna "tidak ada data" dan harus tetap `null` sampai ke chart.
 
-## 6. Test & portabilitas query
+## 7. Test & portabilitas query
 
 - Jalankan `php artisan test` **sebelum dan sesudah** setiap perubahan backend. Kalau
   sebelum-nya sudah merah, itu informasi penting — jangan mulai menumpuk perubahan di atas
@@ -166,7 +241,7 @@ Pola endpoint standar tiap domain: `GET /filter-options`, `/snapshot`, `/chart`,
 - Setiap domain dashboard mendapat feature test sebagai jaring pengaman perilaku, dan
   setiap formula bisnis (lihat §11 PRD) dikunci minimal satu test.
 
-## 7. Format kode & gerbang CI
+## 8. Format kode & gerbang CI
 
 - Backend diformat **Laravel Pint** dengan house style terkunci di
   [`pint.json`](pint.json). Jalankan `./vendor/bin/pint` sebelum commit.
@@ -179,7 +254,7 @@ Pola endpoint standar tiap domain: `GET /filter-options`, `/snapshot`, `/chart`,
 - Kalau sebuah aturan Pint terasa salah, ubah `pint.json` lalu format ulang seluruh repo
   dalam satu commit terpisah — jangan menambah pengecualian per file.
 
-## 8. Environment
+## 9. Environment
 
 - [`.env.example`](.env.example) **wajib ada dan ter-track git** — CI menyalinnya jadi
   `.env`. `.gitignore` memakai pola `.env.*` dengan negasi `!.env.example` tepat di
@@ -193,14 +268,19 @@ Pola endpoint standar tiap domain: `GET /filter-options`, `/snapshot`, `/chart`,
   - `SESSION_LIFETIME=10` (idle timeout 10 menit)
 - Jangan pernah commit `.env`, dump database, atau file sumber berisi data nasabah.
 
-## 9. Struktur direktori
+## 10. Struktur direktori
 
 ```
 app/
   Http/Controllers/          <Domain>DashboardController (tipis), Admin/*
   Http/Middleware/           AdminMiddleware, EnforceUserScope, …
+  Models/                    Region, Area, Cabang, Uker + model domain
   Services/                  <Domain>Service — query & kalkulasi
   Support/                   Satuan.php (satuan uang), Bulan.php (rencana: konstanta bulan)
+database/
+  migrations/                skema; dilarang edit migration lama in-place
+  seeders/MasterSeeder.php   master organisasi — baca CSV, jangan hardcode
+  seeders/data/*.csv         code_region.csv, code_uker.csv, peta_area.csv
 resources/js/
   Pages/<Domain>Dashboard/   halaman Inertia
   Layouts/                   DashboardLayout.vue (layout tunggal)
@@ -211,12 +291,15 @@ routes/web.php               halaman + endpoint api/*
 tests/Feature|Unit/
 ```
 
-## 10. Definition of done (perubahan backend)
+## 11. Definition of done (perubahan backend)
 
 1. `php artisan test` hijau (dan dijalankan juga **sebelum** mulai).
 2. `./vendor/bin/pint` sudah dijalankan; `pint --test` bersih.
 3. Tidak ada query di controller, tidak ada axios di komponen.
 4. Tidak ada `MONTH()`/`YEAR()` mentah atau fungsi khusus MySQL lain.
-5. Tidak ada pembagian 1.000.000 di luar `Satuan`.
-6. Variabel env baru sudah masuk `.env.example`.
-7. `npm run build` lolos kalau ada perubahan frontend.
+5. Tidak ada pembagian 1.000.000 di luar `Satuan`, tidak ada literal `855` di luar
+   `Region::OFFICE_ID`.
+6. Data master baru masuk lewat CSV di `database/seeders/data/`, bukan lewat kode.
+7. Migration baru — tidak mengedit migration lama in-place.
+8. Variabel env baru sudah masuk `.env.example`.
+9. `npm run build` lolos kalau ada perubahan frontend.
