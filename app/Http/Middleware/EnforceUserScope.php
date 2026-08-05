@@ -28,6 +28,21 @@ class EnforceUserScope
     private const PARAM = ['area_id', 'cabang_id', 'uker_id'];
 
     /**
+     * Endpoint "ranking antar entitas" — dibalas KOSONG untuk user level uker.
+     *
+     * Tabel kinerja cabang membandingkan entitas satu sama lain; user yang
+     * terkunci di satu uker tidak berhak melihat posisi kantor lain. Daftar ini
+     * adalah satu-satunya tempat aturan itu ditulis: setiap domain baru yang
+     * punya endpoint ranking WAJIB mendaftarkan nama route-nya di sini.
+     *
+     * @var list<string>
+     */
+    public const BRANCH_ROUTES = [
+        'api.simpanan.branch-pencapaian',
+        'api.pinjaman.branch-pencapaian',
+    ];
+
+    /**
      * Memo area per cabang, sengaja properti instance (bukan static) supaya
      * tidak bocor antar-request di worker yang hidup lama.
      *
@@ -49,6 +64,10 @@ class EnforceUserScope
             // LEVEL_ALL: filter dibiarkan apa adanya.
             default => null,
         };
+
+        if ($user->access_level === User::LEVEL_UKER && $this->routeRanking($request)) {
+            return response()->json(['baris' => []]);
+        }
 
         return $next($request);
     }
@@ -115,6 +134,11 @@ class EnforceUserScope
         }
 
         $request->merge(array_filter($nilai, fn ($isi) => $isi !== null));
+    }
+
+    private function routeRanking(Request $request): bool
+    {
+        return in_array($request->route()?->getName(), self::BRANCH_ROUTES, true);
     }
 
     /**

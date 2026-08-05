@@ -53,6 +53,7 @@ class User extends Authenticatable
         'email',
         'password',
         'role',
+        'is_locked',
         'tipe',
         'cabang_id',
         'uker_id',
@@ -88,6 +89,7 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'is_locked' => 'boolean',
             'cabang_id' => 'integer',
             'uker_id' => 'integer',
         ];

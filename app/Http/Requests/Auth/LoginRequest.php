@@ -52,6 +52,20 @@ class LoginRequest extends FormRequest
             ]);
         }
 
+        // Akun terkunci ditolak MESKIPUN kredensialnya benar. Diperiksa setelah
+        // attempt supaya pesan errornya tidak membocorkan username mana yang ada.
+        if (Auth::user()?->is_locked) {
+            Auth::guard('web')->logout();
+            $this->session()->invalidate();
+            $this->session()->regenerateToken();
+
+            RateLimiter::hit($this->throttleKey());
+
+            throw ValidationException::withMessages([
+                'username' => 'Akun ini dikunci. Hubungi admin RO.',
+            ]);
+        }
+
         RateLimiter::clear($this->throttleKey());
     }
 

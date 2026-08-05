@@ -2,8 +2,8 @@
 
 namespace App\Support;
 
+use App\Exceptions\ImportException;
 use Illuminate\Support\Collection;
-use RuntimeException;
 
 /**
  * Pembaca CSV bersama untuk seeder & importer.
@@ -25,19 +25,21 @@ class Csv
      * @param  list<string>  $kolomWajib
      * @return Collection<int, array<string, string>>
      */
-    public static function baca(string $path, array $kolomWajib = []): Collection
+    public static function baca(string $path, array $kolomWajib = [], ?string $namaAsli = null): Collection
     {
         if (! is_file($path)) {
-            throw new RuntimeException("File CSV tidak ditemukan: {$path}");
+            throw ImportException::berkas("File CSV tidak ditemukan: {$path}");
         }
 
         $handle = fopen($path, 'r');
 
         if ($handle === false) {
-            throw new RuntimeException("File CSV tidak bisa dibuka: {$path}");
+            throw ImportException::berkas("File CSV tidak bisa dibuka: {$path}");
         }
 
-        $nama = basename($path);
+        // Pesan error menyebut nama yang dikenal user, bukan nama berkas
+        // sementara PHP ("phpA1B2.tmp") yang tidak berarti apa-apa baginya.
+        $nama = $namaAsli ?? basename($path);
         $header = null;
         $baris = collect();
         $nomor = 0;
@@ -57,7 +59,7 @@ class Csv
                 }
 
                 if (count($kolom) !== count($header)) {
-                    throw new RuntimeException(sprintf(
+                    throw ImportException::berkas(sprintf(
                         'Baris %d di %s punya %d kolom, harusnya %d: %s',
                         $nomor,
                         $nama,
@@ -74,7 +76,7 @@ class Csv
         }
 
         if ($header === null) {
-            throw new RuntimeException("File CSV kosong: {$path}");
+            throw ImportException::berkas("File CSV kosong: {$path}");
         }
 
         return $baris;
@@ -101,7 +103,7 @@ class Csv
         $hilang = array_diff($kolomWajib, $header);
 
         if ($hilang !== []) {
-            throw new RuntimeException(sprintf(
+            throw ImportException::berkas(sprintf(
                 'Kolom %s tidak ada di %s (kolom terbaca: %s).',
                 implode(', ', $hilang),
                 $nama,

@@ -20,6 +20,9 @@ class DatabaseSeeder extends Seeder
         $this->call([
             MasterSeeder::class,
             UserSeeder::class,
+            // Data dummy dev — otomatis melewatkan diri di produksi.
+            SimpananDummySeeder::class,
+            PinjamanDummySeeder::class,
         ]);
     }
 }

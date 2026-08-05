@@ -65,7 +65,10 @@ return [
     |
     */
 
-    'timezone' => 'UTC',
+    // Dashboard ini menampilkan POSISI HARIAN untuk unit kerja di WIB. Dengan
+    // UTC, Carbon::today() masih menunjuk kemarin sepanjang pukul 17.00-24.00
+    // WIB — tanggal default dashboard jadi mundur sehari tiap sore.
+    'timezone' => env('APP_TIMEZONE', 'Asia/Jakarta'),
 
     /*
     |--------------------------------------------------------------------------

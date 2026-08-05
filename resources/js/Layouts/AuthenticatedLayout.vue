@@ -5,9 +5,27 @@ import Dropdown from '@/Components/Dropdown.vue';
 import DropdownLink from '@/Components/DropdownLink.vue';
 import NavLink from '@/Components/NavLink.vue';
 import ResponsiveNavLink from '@/Components/ResponsiveNavLink.vue';
-import { Link } from '@inertiajs/vue3';
+import { Link, usePage } from '@inertiajs/vue3';
+import { computed } from 'vue';
 
 const showingNavigationDropdown = ref(false);
+
+const isAdmin = computed(() => usePage().props.auth?.user?.role === 'admin');
+
+/**
+ * Menu utama. Domain dashboard berikutnya cukup ditambahkan di sini.
+ *
+ * `adminSaja` hanya menyembunyikan tautannya — gerbang sesungguhnya tetap
+ * middleware `admin` di backend.
+ */
+const MENU = computed(() =>
+    [
+        { label: 'Dashboard', route: 'dashboard', cocok: 'dashboard' },
+        { label: 'Simpanan (DPK)', route: 'simpanan', cocok: 'simpanan' },
+        { label: 'Pinjaman', route: 'pinjaman', cocok: 'pinjaman' },
+        { label: 'Admin', route: 'admin.index', cocok: 'admin.*', adminSaja: true },
+    ].filter((m) => !m.adminSaja || isAdmin.value),
+);
 </script>
 
 <template>
@@ -34,10 +52,12 @@ const showingNavigationDropdown = ref(false);
                                 class="hidden space-x-8 sm:-my-px sm:ms-10 sm:flex"
                             >
                                 <NavLink
-                                    :href="route('dashboard')"
-                                    :active="route().current('dashboard')"
+                                    v-for="m in MENU"
+                                    :key="m.route"
+                                    :href="route(m.route)"
+                                    :active="route().current(m.cocok)"
                                 >
-                                    Dashboard
+                                    {{ m.label }}
                                 </NavLink>
                             </div>
                         </div>
@@ -141,10 +161,12 @@ const showingNavigationDropdown = ref(false);
                 >
                     <div class="space-y-1 pb-3 pt-2">
                         <ResponsiveNavLink
-                            :href="route('dashboard')"
-                            :active="route().current('dashboard')"
+                            v-for="m in MENU"
+                            :key="m.route"
+                            :href="route(m.route)"
+                            :active="route().current(m.cocok)"
                         >
-                            Dashboard
+                            {{ m.label }}
                         </ResponsiveNavLink>
                     </div>
 

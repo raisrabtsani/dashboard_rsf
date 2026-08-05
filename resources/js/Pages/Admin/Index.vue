@@ -1,10 +1,34 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { Head } from '@inertiajs/vue3';
+import { Head, Link } from '@inertiajs/vue3';
 
-// Kerangka area Admin. Sub-halaman (upload aktual, RKA, manajemen user,
-// aktivitas pengguna) menyusul — seluruh grup /admin sudah dijaga middleware
-// 'admin' di routes/web.php.
+const MENU = [
+    {
+        judul: 'Upload Data Simpanan',
+        deskripsi: 'Unggah data aktual harian (CSV/Excel), riwayat, unduh ulang, hapus per tanggal atau per bulan.',
+        route: 'admin.upload.simpanan.index',
+    },
+    {
+        judul: 'RKA Simpanan',
+        deskripsi: 'Unggah target per tahun, lihat ringkasan per produk, hapus per tahun.',
+        route: 'admin.rka.simpanan.index',
+    },
+    {
+        judul: 'Upload Data Pinjaman',
+        deskripsi: 'Unggah baki debet harian per segmen & kualitas. Duplikat dicek per tanggal + segmen.',
+        route: 'admin.upload.pinjaman.index',
+    },
+    {
+        judul: 'RKA Pinjaman',
+        deskripsi: 'Unggah target per tahun (per segmen & kualitas), ringkasan, hapus per tahun.',
+        route: 'admin.rka.pinjaman.index',
+    },
+    {
+        judul: 'Manajemen User',
+        deskripsi: 'CRUD akun, penetapan kantor, kunci/buka akun, ganti password.',
+        route: 'admin.users.index',
+    },
+];
 </script>
 
 <template>
@@ -12,19 +36,27 @@ import { Head } from '@inertiajs/vue3';
 
     <AuthenticatedLayout>
         <template #header>
-            <h2 class="text-xl font-semibold leading-tight text-gray-800">
-                Admin
-            </h2>
+            <h2 class="text-xl font-semibold leading-tight text-gray-800">Admin</h2>
         </template>
 
-        <div class="py-12">
-            <div class="mx-auto max-w-7xl sm:px-6 lg:px-8">
-                <div class="bg-white p-6 shadow sm:rounded-lg">
-                    <p class="text-sm text-gray-600">
-                        Area Admin. Sub-halaman upload data, RKA, manajemen
-                        user, dan aktivitas pengguna akan ditambahkan di sini.
-                    </p>
+        <div class="py-8">
+            <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    <Link
+                        v-for="m in MENU"
+                        :key="m.route"
+                        :href="route(m.route)"
+                        class="block rounded-lg bg-white p-5 shadow ring-1 ring-gray-100 transition hover:ring-indigo-300"
+                    >
+                        <h3 class="text-sm font-semibold text-gray-800">{{ m.judul }}</h3>
+                        <p class="mt-1 text-xs text-gray-500">{{ m.deskripsi }}</p>
+                    </Link>
                 </div>
+
+                <p class="mt-6 text-xs text-gray-400">
+                    Domain lain (Pinjaman, Recovery, Laba, Merchant) menyusul mengikuti pola
+                    yang sama.
+                </p>
             </div>
         </div>
     </AuthenticatedLayout>
