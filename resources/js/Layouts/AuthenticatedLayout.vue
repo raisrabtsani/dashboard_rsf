@@ -11,6 +11,7 @@ import { computed } from 'vue';
 const showingNavigationDropdown = ref(false);
 
 const isAdmin = computed(() => usePage().props.auth?.user?.role === 'admin');
+const levelAkses = computed(() => usePage().props.auth?.user?.access_level ?? 'LEVEL_UKER');
 
 /**
  * Menu utama. Domain dashboard berikutnya cukup ditambahkan di sini.
@@ -22,13 +23,17 @@ const MENU = computed(() =>
     [
         { label: 'Dashboard', route: 'dashboard', cocok: 'dashboard' },
         { label: 'Simpanan (DPK)', route: 'simpanan', cocok: 'simpanan' },
+        // Kosmetik: gerbang sebenarnya middleware `hourly` di backend.
+        { label: 'DPK Hourly', route: 'simpanan-hourly', cocok: 'simpanan-hourly', kecualiUker: true },
         { label: 'Pinjaman', route: 'pinjaman', cocok: 'pinjaman' },
         { label: 'Recovery', route: 'recovery', cocok: 'recovery' },
         { label: 'PH & Net DG', route: 'recovery-ph', cocok: 'recovery-ph' },
         { label: 'Laba', route: 'laba', cocok: 'laba' },
         { label: 'Merchant', route: 'merchant', cocok: 'merchant' },
         { label: 'Admin', route: 'admin.index', cocok: 'admin.*', adminSaja: true },
-    ].filter((m) => !m.adminSaja || isAdmin.value),
+    ]
+        .filter((m) => !m.adminSaja || isAdmin.value)
+        .filter((m) => !m.kecualiUker || levelAkses.value !== 'LEVEL_UKER'),
 );
 </script>
 

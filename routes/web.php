@@ -14,6 +14,7 @@ use App\Http\Controllers\Admin\UploadPinjamanController;
 use App\Http\Controllers\Admin\UploadQrisController;
 use App\Http\Controllers\Admin\UploadRecoveryController;
 use App\Http\Controllers\Admin\UploadSimpananController;
+use App\Http\Controllers\Admin\UploadSimpananHourlyController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\EdcController;
@@ -25,6 +26,7 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\QrisController;
 use App\Http\Controllers\RecoveryDashboardController;
 use App\Http\Controllers\SimpananDashboardController;
+use App\Http\Controllers\SimpananHourlyDashboardController;
 use Illuminate\Support\Facades\Route;
 
 Route::redirect('/', '/login')->name('home');
@@ -43,6 +45,15 @@ Route::middleware(['auth', 'scope'])->group(function () {
     Route::get('/dashboard/pinjaman', [PinjamanDashboardController::class, 'index'])->name('pinjaman');
     Route::get('/dashboard/recovery', [RecoveryDashboardController::class, 'index'])->name('recovery');
     Route::get('/dashboard/recovery-ph', [PhNetDgDashboardController::class, 'index'])->name('recovery-ph');
+
+    /*
+     * DPK Hourly — layar pemantauan hari EOM. Middleware `hourly` (RO/BO/admin)
+     * dipasang di HALAMAN dan di SELURUH endpoint api/simpanan-hourly/* di bawah;
+     * menyembunyikan menunya di frontend BUKAN pengamanan.
+     */
+    Route::get('/dashboard/simpanan-hourly', [SimpananHourlyDashboardController::class, 'index'])
+        ->middleware('hourly')
+        ->name('simpanan-hourly');
     Route::get('/dashboard/laba', [LabaDashboardController::class, 'index'])->name('laba');
     Route::get('/dashboard/merchant', [MerchantController::class, 'index'])->name('merchant');
 
@@ -70,6 +81,16 @@ Route::middleware(['auth', 'scope'])->group(function () {
             Route::get('branch-pencapaian', [PinjamanDashboardController::class, 'branchPencapaian'])->name('branch-pencapaian');
             Route::get('cabang/{areaId}', [PinjamanDashboardController::class, 'cabang'])->name('cabang');
             Route::get('uker/{cabangId}', [PinjamanDashboardController::class, 'uker'])->name('uker');
+        });
+
+        // Seluruh grup dijaga `hourly`, bukan hanya halamannya.
+        Route::prefix('simpanan-hourly')->name('simpanan-hourly.')->middleware('hourly')->group(function () {
+            Route::get('filter-options', [SimpananHourlyDashboardController::class, 'filterOptions'])->name('filter-options');
+            Route::get('snapshot', [SimpananHourlyDashboardController::class, 'snapshot'])->name('snapshot');
+            Route::get('chart', [SimpananHourlyDashboardController::class, 'chart'])->name('chart');
+            Route::get('branch-pencapaian', [SimpananHourlyDashboardController::class, 'branchPencapaian'])->name('branch-pencapaian');
+            Route::get('cabang/{areaId}', [SimpananHourlyDashboardController::class, 'cabang'])->name('cabang');
+            Route::get('uker/{cabangId}', [SimpananHourlyDashboardController::class, 'uker'])->name('uker');
         });
 
         /*
@@ -181,6 +202,15 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
         Route::get('unduh/{tanggal}', [UploadRecoveryController::class, 'unduh'])->name('unduh');
         Route::delete('bulk-month', [UploadRecoveryController::class, 'hapusBulan'])->name('bulk-month');
         Route::delete('{tanggal}', [UploadRecoveryController::class, 'hapusTanggal'])->name('hapus');
+    });
+
+    // Upload DPK Hourly. Jam ditetapkan admin di form, bukan dari berkas.
+    Route::prefix('upload/simpanan-hourly')->name('upload.simpanan-hourly.')->group(function () {
+        Route::get('/', [UploadSimpananHourlyController::class, 'index'])->name('index');
+        Route::get('riwayat', [UploadSimpananHourlyController::class, 'riwayat'])->name('riwayat');
+        Route::post('/', [UploadSimpananHourlyController::class, 'upload'])->name('store');
+        Route::delete('{tanggal}/jam', [UploadSimpananHourlyController::class, 'hapusJam'])->name('hapus-jam');
+        Route::delete('{tanggal}', [UploadSimpananHourlyController::class, 'hapusTanggal'])->name('hapus');
     });
 
     // Upload PH. Tidak ada RKA untuk domain ini.

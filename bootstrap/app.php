@@ -21,6 +21,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'admin' => App\Http\Middleware\AdminMiddleware::class,
             // Penegakan lingkup data; wajib dipasang di SEMUA route dashboard.
             'scope' => App\Http\Middleware\EnforceUserScope::class,
+            // Gerbang DPK Hourly — RO/BO/admin saja (semua kecuali level uker).
+            'hourly' => App\Http\Middleware\EnsureRoBoOrAdmin::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

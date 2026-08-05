@@ -283,6 +283,33 @@ Saat menambah domain ketiga, yang sudah dipakai bersama — **pakai ulang, janga
 Halaman admin per domain seharusnya hanya belasan baris yang meneruskan props. Kalau
 menyalin lebih dari itu, berarti ada yang belum diekstrak.
 
+### 🧭 KASUS KHUSUS: DPK Hourly (layar pemantauan EOM)
+
+Halaman `/dashboard/simpanan-hourly` — posisi DPK per JAM pada tanggal akhir bulan.
+Acuan: [`SimpananHourlyService`](app/Services/SimpananHourlyService.php),
+[`SimpananHourly/Index.vue`](resources/js/Pages/SimpananHourly/Index.vue).
+
+- **Membaca DUA tabel.** Posisi per jam dari `simpanan_hourly`; **pembanding delta dari
+  `simpanan` HARIAN** (posisi hari sebelumnya), BUKAN dari jam sebelumnya. Yang ingin
+  dilihat pengguna adalah "sudah bergerak sejauh apa dari posisi kemarin". Dikunci
+  `SimpananHourlyTest::test_baseline_memakai_tabel_harian_bukan_jam_sebelumnya`.
+- **Jam tidak ada di berkas** — ditetapkan admin di form upload. Data di-upsert pada
+  (uker, produk, segmentasi, tanggal, **jam**), jadi mengunggah ulang jam yang sama
+  memperbaiki angkanya, bukan menggandakan.
+- **Tidak punya RKA.** Kartu memakai `tampilkan-target="false"` dan hanya satu baris
+  delta (`vs H-1`).
+- **Gerbang `hourly` (RO/BO/admin) dipasang di HALAMAN dan di SETIAP endpoint**
+  `api/simpanan-hourly/*`. Menu disembunyikan untuk level uker hanya kosmetik; test
+  memeriksa ketujuh URI-nya satu per satu.
+- **Auto-refresh 2 menit untuk videotron** — tiga aturan yang gampang dilanggar:
+  1. **Senyap**: `LoadingOverlay` menerima prop `senyap` sehingga overlay TIDAK menyala
+     saat refresh otomatis; layar rapat tidak boleh berkedip tiap dua menit.
+  2. **Memakai filter APPLIED**, bukan `pending` — perubahan filter yang belum
+     di-Terapkan sengaja diabaikan oleh refresh.
+  3. **`onUnmounted` membersihkan interval.** Inertia tidak me-reload dokumen, jadi
+     tanpa ini interval terus hidup di halaman lain dan menumpuk tiap kali halaman
+     dibuka ulang.
+
 ### 🧭 KASUS KHUSUS: PH & Net DG (satu halaman, dua domain)
 
 Halaman `/dashboard/recovery-ph` memuat DUA domain lewat toggle `mode=ph|netdg`.
