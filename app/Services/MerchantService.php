@@ -113,6 +113,16 @@ abstract class MerchantService
     }
 
     /**
+     * Tanggal data terakhir yang tersedia pada atau sebelum $tanggal, dalam
+     * lingkup filter. Dipakai halaman Ringkasan (lihat SimpananService); tiap
+     * subклас (EDC/QRIS) meresolusi dari tabelnya sendiri.
+     */
+    public function tanggalTersediaHingga(string $tanggal, ?int $areaId, ?int $cabangId, ?int $ukerId): ?string
+    {
+        return $this->tanggalTersedia(Carbon::parse($tanggal), $areaId, $cabangId, $ukerId);
+    }
+
+    /**
      * Kartu KPI: satu kartu per entri katalog, dengan nilai stok/flow, delta,
      * dan (khusus KPI ber-target) pencapaian & gap.
      *

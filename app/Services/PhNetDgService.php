@@ -98,6 +98,29 @@ class PhNetDgService
     }
 
     /**
+     * Akhir bulan terakhir yang datanya tersedia pada atau sebelum $tanggalBatas,
+     * DALAM lingkup filter — mode-aware:
+     *   PH    → dari tabel `ph` (flow yang sering telat rilis; mundur otomatis).
+     *   NetDG → dari posisi `pinjaman` (basis perhitungan Net DG).
+     *
+     * Dipakai halaman Ringkasan agar kartu domain ini mundur ke bulan terakhir
+     * yang benar-benar ada, bukan bulan posisi yang mungkin belum lengkap.
+     * Null bila tak ada data <= batas di lingkup itu.
+     */
+    public function periodeTersedia(string $mode, string $tanggalBatas, ?int $areaId, ?int $cabangId, ?int $ukerId): ?string
+    {
+        $batas = Carbon::parse($tanggalBatas)->endOfMonth()->toDateString();
+
+        $tanggal = $mode === self::MODE_PH
+            ? $this->filterOrganisasi(Ph::query(), $areaId, $cabangId, $ukerId)
+                ->where('periode', '<=', $batas)->max('periode')
+            : $this->filterOrganisasi(Pinjaman::query(), $areaId, $cabangId, $ukerId)
+                ->where('tanggal', '<=', $batas)->max('tanggal');
+
+        return $tanggal === null ? null : Carbon::parse($tanggal)->endOfMonth()->toDateString();
+    }
+
+    /**
      * @return list<int>
      */
     public function tahunTersedia(): array

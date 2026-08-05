@@ -72,6 +72,17 @@ class SimpananService
     }
 
     /**
+     * Tanggal data terakhir yang tersedia pada atau sebelum $tanggal, dalam
+     * lingkup filter. Dipakai halaman Ringkasan agar kartu domain ini memakai
+     * posisi terbaru yang benar-benar ada (bukan tanggal yang mungkin kosong).
+     * Null bila tak ada data sama sekali di lingkup itu.
+     */
+    public function tanggalTersediaHingga(string $tanggal, ?int $areaId, ?int $cabangId, ?int $ukerId): ?string
+    {
+        return $this->tanggalTersedia(Carbon::parse($tanggal), $areaId, $cabangId, $ukerId);
+    }
+
+    /**
      * Kartu KPI per produk + Total DPK + CASA, lengkap dengan delta & pencapaian.
      *
      * @return array<string, mixed>

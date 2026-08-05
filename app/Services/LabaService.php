@@ -67,6 +67,30 @@ class LabaService
     }
 
     /**
+     * Periode (tahun, bulan) terakhir yang datanya tersedia pada atau sebelum
+     * (tahun, bulan) target, DALAM lingkup filter.
+     *
+     * Laba sering telat rilis, jadi halaman Ringkasan mundur otomatis ke bulan
+     * terakhir yang benar-benar ada agar kartunya tidak kosong hanya karena bulan
+     * posisi belum diunggah. Null bila tak ada data <= periode target di lingkup.
+     *
+     * @return array{tahun: int, bulan: int}|null
+     */
+    public function periodeTersedia(int $tahun, int $bulan, ?int $areaId, ?int $cabangId, ?int $ukerId): ?array
+    {
+        $row = $this->dasar($areaId, $cabangId, $ukerId)
+            ->where(function (Builder $q) use ($tahun, $bulan) {
+                $q->where('tahun', '<', $tahun)
+                    ->orWhere(fn (Builder $qq) => $qq->where('tahun', $tahun)->where('bulan', '<=', $bulan));
+            })
+            ->orderByDesc('tahun')
+            ->orderByDesc('bulan')
+            ->first(['tahun', 'bulan']);
+
+        return $row === null ? null : ['tahun' => (int) $row->tahun, 'bulan' => (int) $row->bulan];
+    }
+
+    /**
      * Kartu KPI: Total + satu kartu per segmen. nilai = KUMULATIF YTD di periode.
      *
      * @return array<string, mixed>

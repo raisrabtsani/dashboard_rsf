@@ -64,6 +64,15 @@ class RecoveryService
     }
 
     /**
+     * Tanggal data terakhir yang tersedia pada atau sebelum $tanggal, dalam
+     * lingkup filter. Dipakai halaman Ringkasan (lihat SimpananService).
+     */
+    public function tanggalTersediaHingga(string $tanggal, ?int $areaId, ?int $cabangId, ?int $ukerId): ?string
+    {
+        return $this->tanggalTersedia(Carbon::parse($tanggal), $areaId, $cabangId, $ukerId);
+    }
+
+    /**
      * Kartu KPI: Total + satu kartu per segmen kanonik, lengkap dengan delta &
      * pencapaian vs RKA bulan posisi.
      *

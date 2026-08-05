@@ -60,6 +60,16 @@ Route::middleware(['auth', 'scope'])->group(function () {
     Route::prefix('api')->name('api.')->group(function () {
         Route::get('scope', [DashboardController::class, 'scope'])->name('scope');
 
+        // Landing: ringkasan lintas domain. Tidak punya endpoint ranking antar
+        // entitas, jadi aman untuk semua level (tiap user melihat total lingkupnya
+        // sendiri) — tidak perlu didaftarkan di EnforceUserScope::BRANCH_ROUTES.
+        Route::prefix('dashboard')->name('dashboard.')->group(function () {
+            Route::get('filter-options', [DashboardController::class, 'filterOptions'])->name('filter-options');
+            Route::get('ringkasan', [DashboardController::class, 'ringkasan'])->name('ringkasan');
+            Route::get('cabang/{areaId}', [DashboardController::class, 'cabang'])->name('cabang');
+            Route::get('uker/{cabangId}', [DashboardController::class, 'uker'])->name('uker');
+        });
+
         // Pola endpoint baku tiap domain — salin bentuk ini untuk domain berikutnya.
         Route::prefix('simpanan')->name('simpanan.')->group(function () {
             Route::get('filter-options', [SimpananDashboardController::class, 'filterOptions'])->name('filter-options');
