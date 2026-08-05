@@ -24,6 +24,7 @@ const MENU = computed(() =>
         { label: 'Simpanan (DPK)', route: 'simpanan', cocok: 'simpanan' },
         { label: 'Pinjaman', route: 'pinjaman', cocok: 'pinjaman' },
         { label: 'Recovery', route: 'recovery', cocok: 'recovery' },
+        { label: 'Laba', route: 'laba', cocok: 'laba' },
         { label: 'Admin', route: 'admin.index', cocok: 'admin.*', adminSaja: true },
     ].filter((m) => !m.adminSaja || isAdmin.value),
 );

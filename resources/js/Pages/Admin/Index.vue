@@ -34,6 +34,16 @@ const MENU = [
         route: 'admin.rka.recovery.index',
     },
     {
+        judul: 'Upload Data Laba',
+        deskripsi: 'Unggah laba KUMULATIF YTD per (segmen, tahun, bulan). Idempoten (upsert), riwayat per periode, hapus per periode/tahun.',
+        route: 'admin.upload.laba.index',
+    },
+    {
+        judul: 'RKA Laba',
+        deskripsi: 'Unggah target laba YTD per tahun (per segmen), ringkasan, hapus per tahun.',
+        route: 'admin.rka.laba.index',
+    },
+    {
         judul: 'Manajemen User',
         deskripsi: 'CRUD akun, penetapan kantor, kunci/buka akun, ganti password.',
         route: 'admin.users.index',
@@ -64,7 +74,7 @@ const MENU = [
                 </div>
 
                 <p class="mt-6 text-xs text-gray-400">
-                    Domain lain (Laba, Merchant) menyusul mengikuti pola yang sama.
+                    Domain lain (Merchant) menyusul mengikuti pola yang sama.
                 </p>
             </div>
         </div>

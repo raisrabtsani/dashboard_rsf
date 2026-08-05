@@ -46,3 +46,32 @@ export function buatAdminApi(domain) {
             axios.delete(route(`admin.rka.${domain}.hapus-tahun`, { tahun })).then((r) => r.data),
     };
 }
+
+/**
+ * Varian BULANAN untuk domain yang datanya per (tahun, bulan), bukan per
+ * tanggal harian — mis. Laba. Riwayat, unduh, dan hapus dikunci pada periode
+ * (tahun, bulan), plus hapus per tahun.
+ */
+export function buatAdminApiBulanan(domain) {
+    const unggah = (namaRoute, berkas) => {
+        const data = new FormData();
+        data.append('berkas', berkas);
+
+        return axios.post(route(namaRoute), data).then((r) => r.data);
+    };
+
+    return {
+        fetchRiwayat: () =>
+            axios.get(route(`admin.upload.${domain}.riwayat`)).then((r) => r.data.riwayat ?? []),
+
+        uploadAktual: (berkas) => unggah(`admin.upload.${domain}.store`, berkas),
+
+        hapusPeriode: (tahun, bulan) =>
+            axios.delete(route(`admin.upload.${domain}.hapus`, { tahun, bulan })).then((r) => r.data),
+
+        hapusTahun: (tahun) =>
+            axios.delete(route(`admin.upload.${domain}.hapus-tahun`, { tahun })).then((r) => r.data),
+
+        urlUnduh: (tahun, bulan) => route(`admin.upload.${domain}.unduh`, { tahun, bulan }),
+    };
+}

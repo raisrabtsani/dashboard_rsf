@@ -1,14 +1,17 @@
 <?php
 
 use App\Http\Controllers\Admin\AdminController;
+use App\Http\Controllers\Admin\RkaLabaController;
 use App\Http\Controllers\Admin\RkaPinjamanController;
 use App\Http\Controllers\Admin\RkaRecoveryController;
 use App\Http\Controllers\Admin\RkaSimpananController;
+use App\Http\Controllers\Admin\UploadLabaController;
 use App\Http\Controllers\Admin\UploadPinjamanController;
 use App\Http\Controllers\Admin\UploadRecoveryController;
 use App\Http\Controllers\Admin\UploadSimpananController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\LabaDashboardController;
 use App\Http\Controllers\PinjamanDashboardController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\RecoveryDashboardController;
@@ -30,6 +33,7 @@ Route::middleware(['auth', 'scope'])->group(function () {
     Route::get('/dashboard/simpanan', [SimpananDashboardController::class, 'index'])->name('simpanan');
     Route::get('/dashboard/pinjaman', [PinjamanDashboardController::class, 'index'])->name('pinjaman');
     Route::get('/dashboard/recovery', [RecoveryDashboardController::class, 'index'])->name('recovery');
+    Route::get('/dashboard/laba', [LabaDashboardController::class, 'index'])->name('laba');
 
     Route::prefix('api')->name('api.')->group(function () {
         Route::get('scope', [DashboardController::class, 'scope'])->name('scope');
@@ -65,6 +69,17 @@ Route::middleware(['auth', 'scope'])->group(function () {
             Route::get('branch-pencapaian', [RecoveryDashboardController::class, 'branchPencapaian'])->name('branch-pencapaian');
             Route::get('cabang/{areaId}', [RecoveryDashboardController::class, 'cabang'])->name('cabang');
             Route::get('uker/{cabangId}', [RecoveryDashboardController::class, 'uker'])->name('uker');
+        });
+
+        // Laba domain BULANAN, plus endpoint khusus chart-mtd (batang per bulan).
+        Route::prefix('laba')->name('laba.')->group(function () {
+            Route::get('filter-options', [LabaDashboardController::class, 'filterOptions'])->name('filter-options');
+            Route::get('snapshot', [LabaDashboardController::class, 'snapshot'])->name('snapshot');
+            Route::get('chart', [LabaDashboardController::class, 'chart'])->name('chart');
+            Route::get('chart-mtd', [LabaDashboardController::class, 'chartMtd'])->name('chart-mtd');
+            Route::get('branch-pencapaian', [LabaDashboardController::class, 'branchPencapaian'])->name('branch-pencapaian');
+            Route::get('cabang/{areaId}', [LabaDashboardController::class, 'cabang'])->name('cabang');
+            Route::get('uker/{cabangId}', [LabaDashboardController::class, 'uker'])->name('uker');
         });
     });
 });
@@ -126,6 +141,24 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
         Route::get('data', [RkaRecoveryController::class, 'data'])->name('data');
         Route::post('/', [RkaRecoveryController::class, 'upload'])->name('store');
         Route::delete('year/{tahun}', [RkaRecoveryController::class, 'hapusTahun'])->name('hapus-tahun');
+    });
+
+    // Upload data aktual Laba — BULANAN (periode tahun+bulan, bukan tanggal).
+    Route::prefix('upload/laba')->name('upload.laba.')->group(function () {
+        Route::get('/', [UploadLabaController::class, 'index'])->name('index');
+        Route::get('riwayat', [UploadLabaController::class, 'riwayat'])->name('riwayat');
+        Route::post('/', [UploadLabaController::class, 'upload'])->name('store');
+        Route::get('unduh/{tahun}/{bulan}', [UploadLabaController::class, 'unduh'])->name('unduh');
+        Route::delete('year/{tahun}', [UploadLabaController::class, 'hapusTahun'])->name('hapus-tahun');
+        Route::delete('{tahun}/{bulan}', [UploadLabaController::class, 'hapusPeriode'])->name('hapus');
+    });
+
+    // Kelola RKA Laba.
+    Route::prefix('rka/laba')->name('rka.laba.')->group(function () {
+        Route::get('/', [RkaLabaController::class, 'index'])->name('index');
+        Route::get('data', [RkaLabaController::class, 'data'])->name('data');
+        Route::post('/', [RkaLabaController::class, 'upload'])->name('store');
+        Route::delete('year/{tahun}', [RkaLabaController::class, 'hapusTahun'])->name('hapus-tahun');
     });
 
     // Kelola RKA Simpanan.
