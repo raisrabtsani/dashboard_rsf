@@ -24,6 +24,26 @@ const MENU = [
         route: 'admin.rka.pinjaman.index',
     },
     {
+        judul: 'Upload DPK Wholesale',
+        deskripsi: 'Segmen Wholesale (khusus PRESENT). Saldo per produk dijumlahkan per granularitas; tolak bila tanggalnya sudah ada.',
+        route: 'admin.upload.simpanan-wholesale.index',
+    },
+    {
+        judul: 'RKA DPK Wholesale',
+        deskripsi: 'Target DPK Wholesale per tahun (per produk), ringkasan, hapus per tahun.',
+        route: 'admin.rka.simpanan-wholesale.index',
+    },
+    {
+        judul: 'Upload Pinjaman Commercial',
+        deskripsi: 'Segmen Commercial (khusus PRESENT). Baki debet per kualitas dijumlahkan per granularitas; tolak bila tanggalnya sudah ada.',
+        route: 'admin.upload.pinjaman-commercial.index',
+    },
+    {
+        judul: 'RKA Pinjaman Commercial',
+        deskripsi: 'Target Pinjaman Commercial per tahun (per kualitas), ringkasan, hapus per tahun.',
+        route: 'admin.rka.pinjaman-commercial.index',
+    },
+    {
         judul: 'Upload Data Recovery',
         deskripsi: 'Unggah penagihan hapus buku per segmen. Baris debitur dijumlahkan per (cabang, uker, segmen, tanggal); unggah ulang menimpa (upsert).',
         route: 'admin.upload.recovery.index',

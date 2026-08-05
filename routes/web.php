@@ -3,18 +3,22 @@
 use App\Http\Controllers\Admin\AdminController;
 use App\Http\Controllers\Admin\RkaEdcController;
 use App\Http\Controllers\Admin\RkaLabaController;
+use App\Http\Controllers\Admin\RkaPinjamanCommercialController;
 use App\Http\Controllers\Admin\RkaPinjamanController;
 use App\Http\Controllers\Admin\RkaQrisController;
 use App\Http\Controllers\Admin\RkaRecoveryController;
 use App\Http\Controllers\Admin\RkaSimpananController;
+use App\Http\Controllers\Admin\RkaSimpananWholesaleController;
 use App\Http\Controllers\Admin\UploadEdcController;
 use App\Http\Controllers\Admin\UploadLabaController;
 use App\Http\Controllers\Admin\UploadPhController;
+use App\Http\Controllers\Admin\UploadPinjamanCommercialController;
 use App\Http\Controllers\Admin\UploadPinjamanController;
 use App\Http\Controllers\Admin\UploadQrisController;
 use App\Http\Controllers\Admin\UploadRecoveryController;
 use App\Http\Controllers\Admin\UploadSimpananController;
 use App\Http\Controllers\Admin\UploadSimpananHourlyController;
+use App\Http\Controllers\Admin\UploadSimpananWholesaleController;
 use App\Http\Controllers\Admin\UserActivityController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\DashboardController;
@@ -23,6 +27,7 @@ use App\Http\Controllers\LabaDashboardController;
 use App\Http\Controllers\MerchantController;
 use App\Http\Controllers\PhNetDgDashboardController;
 use App\Http\Controllers\PinjamanDashboardController;
+use App\Http\Controllers\PresentController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\QrisController;
 use App\Http\Controllers\RecoveryDashboardController;
@@ -58,6 +63,13 @@ Route::middleware(['auth', 'scope'])->group(function () {
     Route::get('/dashboard/laba', [LabaDashboardController::class, 'index'])->name('laba');
     Route::get('/dashboard/merchant', [MerchantController::class, 'index'])->name('merchant');
 
+    /*
+     * PRESENT — slide rapat pagi Region. Gerbang `present` (RO/admin) dipasang di
+     * HALAMAN dan di SETIAP endpoint api/present/* di bawah. Menyembunyikan menunya
+     * di frontend BUKAN pengamanan.
+     */
+    Route::get('/present', [PresentController::class, 'index'])->middleware('present')->name('present');
+
     Route::prefix('api')->name('api.')->group(function () {
         Route::get('scope', [DashboardController::class, 'scope'])->name('scope');
 
@@ -69,6 +81,13 @@ Route::middleware(['auth', 'scope'])->group(function () {
             Route::get('ringkasan', [DashboardController::class, 'ringkasan'])->name('ringkasan');
             Route::get('cabang/{areaId}', [DashboardController::class, 'cabang'])->name('cabang');
             Route::get('uker/{cabangId}', [DashboardController::class, 'uker'])->name('uker');
+        });
+
+        // PRESENT — seluruh grup dijaga `present` (RO/admin), bukan hanya halamannya.
+        Route::prefix('present')->name('present.')->middleware('present')->group(function () {
+            Route::get('overview', [PresentController::class, 'overview'])->name('overview');
+            Route::get('area', [PresentController::class, 'area'])->name('area');
+            Route::get('detail', [PresentController::class, 'detail'])->name('detail');
         });
 
         // Pola endpoint baku tiap domain — salin bentuk ini untuk domain berikutnya.
@@ -300,6 +319,43 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
         Route::get('data', [RkaSimpananController::class, 'data'])->name('data');
         Route::post('/', [RkaSimpananController::class, 'upload'])->name('store');
         Route::delete('year/{tahun}', [RkaSimpananController::class, 'hapusTahun'])->name('hapus-tahun');
+    });
+
+    /*
+     * Segmen tambahan khusus PRESENT (tidak masuk dashboard harian):
+     * DPK Wholesale & Pinjaman Commercial — masing-masing upload aktual + RKA,
+     * mengikuti pola domain harian.
+     */
+    Route::prefix('upload/simpanan-wholesale')->name('upload.simpanan-wholesale.')->group(function () {
+        Route::get('/', [UploadSimpananWholesaleController::class, 'index'])->name('index');
+        Route::get('riwayat', [UploadSimpananWholesaleController::class, 'riwayat'])->name('riwayat');
+        Route::post('/', [UploadSimpananWholesaleController::class, 'upload'])->name('store');
+        Route::get('unduh/{tanggal}', [UploadSimpananWholesaleController::class, 'unduh'])->name('unduh');
+        Route::delete('bulk-month', [UploadSimpananWholesaleController::class, 'hapusBulan'])->name('bulk-month');
+        Route::delete('{tanggal}', [UploadSimpananWholesaleController::class, 'hapusTanggal'])->name('hapus');
+    });
+
+    Route::prefix('rka/simpanan-wholesale')->name('rka.simpanan-wholesale.')->group(function () {
+        Route::get('/', [RkaSimpananWholesaleController::class, 'index'])->name('index');
+        Route::get('data', [RkaSimpananWholesaleController::class, 'data'])->name('data');
+        Route::post('/', [RkaSimpananWholesaleController::class, 'upload'])->name('store');
+        Route::delete('year/{tahun}', [RkaSimpananWholesaleController::class, 'hapusTahun'])->name('hapus-tahun');
+    });
+
+    Route::prefix('upload/pinjaman-commercial')->name('upload.pinjaman-commercial.')->group(function () {
+        Route::get('/', [UploadPinjamanCommercialController::class, 'index'])->name('index');
+        Route::get('riwayat', [UploadPinjamanCommercialController::class, 'riwayat'])->name('riwayat');
+        Route::post('/', [UploadPinjamanCommercialController::class, 'upload'])->name('store');
+        Route::get('unduh/{tanggal}', [UploadPinjamanCommercialController::class, 'unduh'])->name('unduh');
+        Route::delete('bulk-month', [UploadPinjamanCommercialController::class, 'hapusBulan'])->name('bulk-month');
+        Route::delete('{tanggal}', [UploadPinjamanCommercialController::class, 'hapusTanggal'])->name('hapus');
+    });
+
+    Route::prefix('rka/pinjaman-commercial')->name('rka.pinjaman-commercial.')->group(function () {
+        Route::get('/', [RkaPinjamanCommercialController::class, 'index'])->name('index');
+        Route::get('data', [RkaPinjamanCommercialController::class, 'data'])->name('data');
+        Route::post('/', [RkaPinjamanCommercialController::class, 'upload'])->name('store');
+        Route::delete('year/{tahun}', [RkaPinjamanCommercialController::class, 'hapusTahun'])->name('hapus-tahun');
     });
 
     // Aktivitas pengguna — online sekarang (dari sessions) + terakhir aktif per user.

@@ -51,6 +51,8 @@ const watermarkStyle = computed(() => {
 const MENU = computed(() =>
     [
         { label: 'Dashboard', route: 'dashboard', cocok: 'dashboard' },
+        // Kosmetik: gerbang sebenarnya middleware `present` (RO/admin) di backend.
+        { label: 'PRESENT', route: 'present', cocok: 'present', hanyaLevelAll: true },
         { label: 'Simpanan (DPK)', route: 'simpanan', cocok: 'simpanan' },
         // Kosmetik: gerbang sebenarnya middleware `hourly` di backend.
         { label: 'DPK Hourly', route: 'simpanan-hourly', cocok: 'simpanan-hourly', kecualiUker: true },
@@ -62,7 +64,8 @@ const MENU = computed(() =>
         { label: 'Admin', route: 'admin.index', cocok: 'admin.*', adminSaja: true },
     ]
         .filter((m) => !m.adminSaja || isAdmin.value)
-        .filter((m) => !m.kecualiUker || levelAkses.value !== 'LEVEL_UKER'),
+        .filter((m) => !m.kecualiUker || levelAkses.value !== 'LEVEL_UKER')
+        .filter((m) => !m.hanyaLevelAll || levelAkses.value === 'LEVEL_ALL'),
 );
 </script>
 

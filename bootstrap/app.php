@@ -25,6 +25,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'scope' => App\Http\Middleware\EnforceUserScope::class,
             // Gerbang DPK Hourly — RO/BO/admin saja (semua kecuali level uker).
             'hourly' => App\Http\Middleware\EnsureRoBoOrAdmin::class,
+            // Gerbang PRESENT — RO/admin saja (access_level LEVEL_ALL).
+            'present' => App\Http\Middleware\EnsurePresentAccess::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

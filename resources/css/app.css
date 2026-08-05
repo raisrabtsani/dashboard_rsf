@@ -71,6 +71,38 @@
         font-size: clamp(1.125rem, 9cqw, 2.5rem);
         line-height: 1.1;
     }
+
+    /*
+     * Kartu PRESENT (layar rapat / videotron). Wadah container-query supaya nilai
+     * & susunan delta menyesuaikan LEBAR KARTU, bukan viewport.
+     */
+    .present-card {
+        @apply rounded-xl bg-white p-4 shadow-sm ring-1 ring-gray-100;
+        container-type: inline-size;
+    }
+    /* Nilai besar, terbaca dari jauh; tidak pernah dipotong (no truncate). */
+    .present-nilai {
+        font-size: clamp(1.25rem, 12cqw, 3rem);
+        line-height: 1.05;
+    }
+    /* Persentase pencapaian, ikut menskala tapi lebih kecil dari nilai. */
+    .present-pct {
+        font-size: clamp(0.8rem, 5cqw, 1.35rem);
+        line-height: 1;
+    }
+    /* Blok MtD & YtD: sejajar saat lebar, DITUMPUK saat kartu sempit (HP). */
+    .present-deltas {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.5rem;
+    }
+}
+
+/* Container query di luar @layer agar tidak dilucuti optimizer. */
+@container (max-width: 230px) {
+    .present-deltas {
+        grid-template-columns: 1fr;
+    }
 }
 
 /*
