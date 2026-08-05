@@ -1,5 +1,12 @@
 <script setup>
-import { formatAngka, formatDelta, formatDeltaPct, formatPct } from '@/utils/formatAngka';
+import {
+    formatAngka,
+    formatDelta,
+    formatDeltaJumlah,
+    formatDeltaPct,
+    formatJumlah,
+    formatPct,
+} from '@/utils/formatAngka';
 import { deltaCls, pctBadgeClsArah } from '@/utils/pencapaian';
 import { computed } from 'vue';
 
@@ -7,7 +14,6 @@ import { computed } from 'vue';
  * Kartu KPI baku: nilai posisi + baris delta + pencapaian vs RKA.
  *
  * Dipakai ulang SEMUA domain dashboard — jangan bikin varian per halaman.
- * Semua nilai uang masuk dalam satuan juta (lihat utils/formatAngka.js).
  */
 const props = defineProps({
     judul: { type: String, required: true },
@@ -19,13 +25,19 @@ const props = defineProps({
     gap: { type: Number, default: null },
     /**
      * Susunan baris delta, bila domain memakai kolom yang berbeda.
-     * Mis. Pinjaman tab SML/NPL mengganti YoY dengan "Date to Date" (MoM).
-     * Dikirim backend lewat `label_delta` supaya label & key tidak pernah
-     * berbeda antara yang dihitung dan yang ditampilkan.
+     * Mis. Pinjaman SML/NPL mengganti YoY dengan MoM; Laba & Merchant flow
+     * menghilangkan salah satu kolom. Dikirim backend lewat `label_delta`.
      */
     labelDelta: { type: Array, default: null },
-    /** KPI yang makin KECIL makin baik (SML, NPL). Membalik semua pewarnaan. */
+    /** KPI yang makin KECIL makin baik (SML, NPL, EDC SV Rp.0). */
     inverse: { type: Boolean, default: false },
+    /**
+     * KPI uang (satuan juta) vs HITUNGAN (unit/transaksi). Nilai hitungan
+     * diformat tanpa skala Jt/M/T. Default true supaya domain uang tak berubah.
+     */
+    rupiah: { type: Boolean, default: true },
+    /** Sembunyikan blok RKA/gap/pencapaian untuk KPI tanpa target. */
+    tampilkanTarget: { type: Boolean, default: true },
 });
 
 // Label UI "D-1", tapi key datanya tetap `dtd` — jangan diganti.
@@ -43,6 +55,9 @@ const deltaBaris = computed(() =>
         persen: props.delta?.[d.key]?.persen ?? null,
     })),
 );
+
+const fmtNilai = (v) => (props.rupiah ? formatAngka(v) : formatJumlah(v));
+const fmtDelta = (v) => (props.rupiah ? formatDelta(v) : formatDeltaJumlah(v));
 </script>
 
 <template>
@@ -52,7 +67,7 @@ const deltaBaris = computed(() =>
         </p>
 
         <p class="mt-1 text-2xl font-semibold tabular-nums text-gray-900">
-            {{ formatAngka(nilai) }}
+            {{ fmtNilai(nilai) }}
         </p>
 
         <dl class="mt-3 grid grid-cols-2 gap-x-3 gap-y-1">
@@ -67,18 +82,21 @@ const deltaBaris = computed(() =>
                 <dd
                     class="text-[11px] font-semibold tabular-nums"
                     :class="deltaCls(d.nilai, inverse)"
-                    :title="`${formatDelta(d.nilai)} (${formatDeltaPct(d.persen)})`"
+                    :title="`${fmtDelta(d.nilai)} (${formatDeltaPct(d.persen)})`"
                 >
-                    {{ formatDelta(d.nilai) }}
+                    {{ fmtDelta(d.nilai) }}
                 </dd>
             </div>
         </dl>
 
-        <div class="mt-3 flex items-center justify-between border-t border-gray-100 pt-2">
+        <div
+            v-if="tampilkanTarget"
+            class="mt-3 flex items-center justify-between border-t border-gray-100 pt-2"
+        >
             <div class="text-[11px] text-gray-500">
-                <span class="block">RKA {{ formatAngka(target) }}</span>
+                <span class="block">RKA {{ fmtNilai(target) }}</span>
                 <span class="block" :class="deltaCls(gap, inverse)">
-                    Gap {{ formatDelta(gap) }}
+                    Gap {{ fmtDelta(gap) }}
                 </span>
             </div>
 

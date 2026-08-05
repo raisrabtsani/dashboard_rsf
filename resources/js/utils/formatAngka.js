@@ -55,6 +55,27 @@ export function formatDelta(juta) {
 }
 
 /**
+ * Format HITUNGAN (bukan uang): "1.234". Tanpa skala Jt/M/T — dipakai KPI
+ * merchant yang satuannya unit/transaksi, bukan rupiah.
+ */
+export function formatJumlah(nilai, desimal = 0) {
+    if (nilai === null || nilai === undefined || Number.isNaN(nilai)) return '–';
+
+    return angka(nilai, desimal);
+}
+
+/**
+ * Hitungan bertanda untuk baris delta KPI non-rupiah: "+1.234".
+ */
+export function formatDeltaJumlah(nilai, desimal = 0) {
+    if (nilai === null || nilai === undefined || Number.isNaN(nilai)) return '–';
+
+    const tanda = nilai > 0 ? '+' : nilai < 0 ? '−' : '';
+
+    return `${tanda}${formatJumlah(Math.abs(nilai), desimal)}`;
+}
+
+/**
  * "97,45%" — persen sudah dalam skala 0-100 dari backend.
  */
 export function formatPct(persen, desimal = 2) {

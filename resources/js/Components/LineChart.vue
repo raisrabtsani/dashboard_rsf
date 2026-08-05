@@ -22,11 +22,16 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip,
 const props = defineProps({
     labels: { type: Array, required: true },
     datasets: { type: Array, required: true },
+    /**
+     * Formatter sumbu-Y & tooltip. Default satuan uang (juta). KPI hitungan
+     * (mis. merchant) mengirim formatJumlah supaya tidak diskalakan ke Jt/M/T.
+     */
+    formatNilai: { type: Function, default: formatAngka },
 });
 
 const data = computed(() => ({ labels: props.labels, datasets: props.datasets }));
 
-const options = {
+const options = computed(() => ({
     responsive: true,
     maintainAspectRatio: false,
     interaction: { mode: 'index', intersect: false },
@@ -34,19 +39,19 @@ const options = {
         legend: { position: 'bottom', labels: { boxWidth: 12, usePointStyle: true } },
         tooltip: {
             callbacks: {
-                label: (ctx) => `${ctx.dataset.label}: ${formatAngka(ctx.parsed.y)}`,
+                label: (ctx) => `${ctx.dataset.label}: ${props.formatNilai(ctx.parsed.y)}`,
             },
         },
     },
     scales: {
         y: {
-            ticks: { callback: (v) => formatAngka(v) },
+            ticks: { callback: (v) => props.formatNilai(v) },
             grid: { color: 'rgba(0,0,0,0.05)' },
         },
         x: { grid: { display: false } },
     },
     elements: { line: { tension: 0.3, borderWidth: 2 }, point: { radius: 0, hitRadius: 12 } },
-};
+}));
 </script>
 
 <template>

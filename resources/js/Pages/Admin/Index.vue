@@ -44,6 +44,26 @@ const MENU = [
         route: 'admin.rka.laba.index',
     },
     {
+        judul: 'Upload Data EDC',
+        deskripsi: 'Unggah nilai KPI EDC harian (TID, MID, Sales Volume, dst). Nama KPI dinormalkan otomatis; upsert per (uker, KPI, tanggal).',
+        route: 'admin.upload.edc.index',
+    },
+    {
+        judul: 'RKA EDC',
+        deskripsi: 'Unggah target per KPI EDC (per tahun/bulan), ringkasan, hapus per tahun.',
+        route: 'admin.rka.edc.index',
+    },
+    {
+        judul: 'Upload Data QRIS',
+        deskripsi: 'Unggah nilai KPI QRIS harian (User QRIS, Sales Volume, dst). Nama KPI dinormalkan otomatis; upsert per (uker, KPI, tanggal).',
+        route: 'admin.upload.qris.index',
+    },
+    {
+        judul: 'RKA QRIS',
+        deskripsi: 'Unggah target per KPI QRIS (per tahun/bulan), ringkasan, hapus per tahun.',
+        route: 'admin.rka.qris.index',
+    },
+    {
         judul: 'Manajemen User',
         deskripsi: 'CRUD akun, penetapan kantor, kunci/buka akun, ganti password.',
         route: 'admin.users.index',
@@ -74,7 +94,7 @@ const MENU = [
                 </div>
 
                 <p class="mt-6 text-xs text-gray-400">
-                    Domain lain (Merchant) menyusul mengikuti pola yang sama.
+                    Seluruh domain dashboard region kini tersedia.
                 </p>
             </div>
         </div>

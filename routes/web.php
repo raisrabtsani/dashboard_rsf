@@ -1,19 +1,26 @@
 <?php
 
 use App\Http\Controllers\Admin\AdminController;
+use App\Http\Controllers\Admin\RkaEdcController;
 use App\Http\Controllers\Admin\RkaLabaController;
 use App\Http\Controllers\Admin\RkaPinjamanController;
+use App\Http\Controllers\Admin\RkaQrisController;
 use App\Http\Controllers\Admin\RkaRecoveryController;
 use App\Http\Controllers\Admin\RkaSimpananController;
+use App\Http\Controllers\Admin\UploadEdcController;
 use App\Http\Controllers\Admin\UploadLabaController;
 use App\Http\Controllers\Admin\UploadPinjamanController;
+use App\Http\Controllers\Admin\UploadQrisController;
 use App\Http\Controllers\Admin\UploadRecoveryController;
 use App\Http\Controllers\Admin\UploadSimpananController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\EdcController;
 use App\Http\Controllers\LabaDashboardController;
+use App\Http\Controllers\MerchantController;
 use App\Http\Controllers\PinjamanDashboardController;
 use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\QrisController;
 use App\Http\Controllers\RecoveryDashboardController;
 use App\Http\Controllers\SimpananDashboardController;
 use Illuminate\Support\Facades\Route;
@@ -34,6 +41,7 @@ Route::middleware(['auth', 'scope'])->group(function () {
     Route::get('/dashboard/pinjaman', [PinjamanDashboardController::class, 'index'])->name('pinjaman');
     Route::get('/dashboard/recovery', [RecoveryDashboardController::class, 'index'])->name('recovery');
     Route::get('/dashboard/laba', [LabaDashboardController::class, 'index'])->name('laba');
+    Route::get('/dashboard/merchant', [MerchantController::class, 'index'])->name('merchant');
 
     Route::prefix('api')->name('api.')->group(function () {
         Route::get('scope', [DashboardController::class, 'scope'])->name('scope');
@@ -80,6 +88,30 @@ Route::middleware(['auth', 'scope'])->group(function () {
             Route::get('branch-pencapaian', [LabaDashboardController::class, 'branchPencapaian'])->name('branch-pencapaian');
             Route::get('cabang/{areaId}', [LabaDashboardController::class, 'cabang'])->name('cabang');
             Route::get('uker/{cabangId}', [LabaDashboardController::class, 'uker'])->name('uker');
+        });
+
+        /*
+         * Merchant = SATU halaman, DUA prefix endpoint (EDC & QRIS). Endpoint
+         * chart & branch-pencapaian menerima parameter `kpi` (kode katalog).
+         */
+        Route::prefix('merchant')->name('merchant.')->group(function () {
+            Route::prefix('edc')->name('edc.')->group(function () {
+                Route::get('filter-options', [EdcController::class, 'filterOptions'])->name('filter-options');
+                Route::get('snapshot', [EdcController::class, 'snapshot'])->name('snapshot');
+                Route::get('chart', [EdcController::class, 'chart'])->name('chart');
+                Route::get('branch-pencapaian', [EdcController::class, 'branchPencapaian'])->name('branch-pencapaian');
+                Route::get('cabang/{areaId}', [EdcController::class, 'cabang'])->name('cabang');
+                Route::get('uker/{cabangId}', [EdcController::class, 'uker'])->name('uker');
+            });
+
+            Route::prefix('qris')->name('qris.')->group(function () {
+                Route::get('filter-options', [QrisController::class, 'filterOptions'])->name('filter-options');
+                Route::get('snapshot', [QrisController::class, 'snapshot'])->name('snapshot');
+                Route::get('chart', [QrisController::class, 'chart'])->name('chart');
+                Route::get('branch-pencapaian', [QrisController::class, 'branchPencapaian'])->name('branch-pencapaian');
+                Route::get('cabang/{areaId}', [QrisController::class, 'cabang'])->name('cabang');
+                Route::get('uker/{cabangId}', [QrisController::class, 'uker'])->name('uker');
+            });
         });
     });
 });
@@ -159,6 +191,40 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
         Route::get('data', [RkaLabaController::class, 'data'])->name('data');
         Route::post('/', [RkaLabaController::class, 'upload'])->name('store');
         Route::delete('year/{tahun}', [RkaLabaController::class, 'hapusTahun'])->name('hapus-tahun');
+    });
+
+    // Merchant EDC — data aktual harian per KPI.
+    Route::prefix('upload/edc')->name('upload.edc.')->group(function () {
+        Route::get('/', [UploadEdcController::class, 'index'])->name('index');
+        Route::get('riwayat', [UploadEdcController::class, 'riwayat'])->name('riwayat');
+        Route::post('/', [UploadEdcController::class, 'upload'])->name('store');
+        Route::get('unduh/{tanggal}', [UploadEdcController::class, 'unduh'])->name('unduh');
+        Route::delete('bulk-month', [UploadEdcController::class, 'hapusBulan'])->name('bulk-month');
+        Route::delete('{tanggal}', [UploadEdcController::class, 'hapusTanggal'])->name('hapus');
+    });
+
+    Route::prefix('rka/edc')->name('rka.edc.')->group(function () {
+        Route::get('/', [RkaEdcController::class, 'index'])->name('index');
+        Route::get('data', [RkaEdcController::class, 'data'])->name('data');
+        Route::post('/', [RkaEdcController::class, 'upload'])->name('store');
+        Route::delete('year/{tahun}', [RkaEdcController::class, 'hapusTahun'])->name('hapus-tahun');
+    });
+
+    // Merchant QRIS — data aktual harian per KPI.
+    Route::prefix('upload/qris')->name('upload.qris.')->group(function () {
+        Route::get('/', [UploadQrisController::class, 'index'])->name('index');
+        Route::get('riwayat', [UploadQrisController::class, 'riwayat'])->name('riwayat');
+        Route::post('/', [UploadQrisController::class, 'upload'])->name('store');
+        Route::get('unduh/{tanggal}', [UploadQrisController::class, 'unduh'])->name('unduh');
+        Route::delete('bulk-month', [UploadQrisController::class, 'hapusBulan'])->name('bulk-month');
+        Route::delete('{tanggal}', [UploadQrisController::class, 'hapusTanggal'])->name('hapus');
+    });
+
+    Route::prefix('rka/qris')->name('rka.qris.')->group(function () {
+        Route::get('/', [RkaQrisController::class, 'index'])->name('index');
+        Route::get('data', [RkaQrisController::class, 'data'])->name('data');
+        Route::post('/', [RkaQrisController::class, 'upload'])->name('store');
+        Route::delete('year/{tahun}', [RkaQrisController::class, 'hapusTahun'])->name('hapus-tahun');
     });
 
     // Kelola RKA Simpanan.
