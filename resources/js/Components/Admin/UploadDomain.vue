@@ -23,9 +23,17 @@ const props = defineProps({
     labelNilai: { type: String, default: 'Total Nilai' },
     /** Key nilai pada payload riwayat (Simpanan: total_saldo, Pinjaman: total). */
     keyNilai: { type: String, default: 'total' },
+    /**
+     * Nama kolom periode di payload riwayat & parameter route.
+     * Domain harian memakai 'tanggal'; PH memakai 'periode' (akhir bulan).
+     */
+    keyPeriode: { type: String, default: 'tanggal' },
+    labelPeriode: { type: String, default: 'Tanggal' },
+    /** 'bulan' = hapus per (tahun, bulan); 'tahun' = hapus seluruh tahun. */
+    massal: { type: String, default: 'bulan' },
 });
 
-const api = buatAdminApi(props.domain);
+const api = buatAdminApi(props.domain, { param: props.keyPeriode, massal: props.massal });
 
 const berkas = ref(null);
 const riwayat = ref([]);
@@ -34,11 +42,11 @@ const mengunggah = ref(false);
 const pesan = ref(null);
 const hapus = ref({ tahun: new Date().getFullYear(), bulan: new Date().getMonth() + 1 });
 
-const sort = useTableSort('tanggal', 'desc');
+const sort = useTableSort(props.keyPeriode, 'desc');
 const riwayatTerurut = computed(() => sort.urutkan(riwayat.value));
 
 const KOLOM = computed(() => [
-    { key: 'tanggal', label: 'Tanggal', kelas: 'text-left' },
+    { key: props.keyPeriode, label: props.labelPeriode, kelas: 'text-left' },
     { key: 'jumlah_baris', label: 'Jumlah Baris', kelas: 'text-right' },
     { key: props.keyNilai, label: props.labelNilai, kelas: 'text-right' },
     { key: 'diunggah', label: 'Terakhir Diunggah', kelas: 'text-left' },
@@ -91,7 +99,10 @@ async function hapusSatuTanggal(tanggal) {
 }
 
 async function hapusSatuBulan() {
-    const nama = `${BULAN[hapus.value.bulan - 1]} ${hapus.value.tahun}`;
+    const nama = props.massal === 'tahun'
+        ? `tahun ${hapus.value.tahun}`
+        : `${BULAN[hapus.value.bulan - 1]} ${hapus.value.tahun}`;
+
     if (!confirm(`Hapus SEMUA data ${props.domain} pada ${nama}?`)) return;
 
     try {
@@ -156,9 +167,11 @@ onMounted(muat);
                 </div>
 
                 <div class="rounded-lg bg-white p-4 shadow ring-1 ring-gray-100">
-                    <h3 class="text-sm font-semibold text-gray-700">Hapus per Bulan</h3>
+                    <h3 class="text-sm font-semibold text-gray-700">
+                        {{ massal === 'tahun' ? 'Hapus per Tahun' : 'Hapus per Bulan' }}
+                    </h3>
                     <div class="mt-3 flex flex-wrap items-end gap-3">
-                        <label class="block">
+                        <label v-if="massal !== 'tahun'" class="block">
                             <span class="text-xs font-medium text-gray-500">Bulan</span>
                             <select v-model.number="hapus.bulan" class="mt-1 block rounded-md border-gray-300 text-sm">
                                 <option v-for="(nama, i) in BULAN" :key="nama" :value="i + 1">{{ nama }}</option>
@@ -173,7 +186,7 @@ onMounted(muat);
                             class="rounded-md bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700"
                             @click="hapusSatuBulan"
                         >
-                            Hapus Bulan Ini
+                            {{ massal === 'tahun' ? 'Hapus Tahun Ini' : 'Hapus Bulan Ini' }}
                         </button>
                     </div>
                 </div>
@@ -207,8 +220,8 @@ onMounted(muat);
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-gray-50">
-                                <tr v-for="r in riwayatTerurut" :key="r.tanggal" class="hover:bg-gray-50">
-                                    <td class="px-4 py-2 text-gray-800">{{ r.tanggal }}</td>
+                                <tr v-for="r in riwayatTerurut" :key="r[keyPeriode]" class="hover:bg-gray-50">
+                                    <td class="px-4 py-2 text-gray-800">{{ r[keyPeriode] }}</td>
                                     <td class="px-4 py-2 text-right tabular-nums">
                                         {{ r.jumlah_baris.toLocaleString('id-ID') }}
                                     </td>
@@ -217,8 +230,8 @@ onMounted(muat);
                                     </td>
                                     <td class="px-4 py-2 text-gray-500">{{ r.diunggah ?? '–' }}</td>
                                     <td class="whitespace-nowrap px-4 py-2 text-right">
-                                        <a :href="api.urlUnduh(r.tanggal)" class="text-indigo-600 hover:underline">Unduh</a>
-                                        <button type="button" class="ms-3 text-rose-600 hover:underline" @click="hapusSatuTanggal(r.tanggal)">
+                                        <a :href="api.urlUnduh(r[keyPeriode])" class="text-indigo-600 hover:underline">Unduh</a>
+                                        <button type="button" class="ms-3 text-rose-600 hover:underline" @click="hapusSatuTanggal(r[keyPeriode])">
                                             Hapus
                                         </button>
                                     </td>

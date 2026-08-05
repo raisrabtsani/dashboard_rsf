@@ -24,6 +24,7 @@ const MENU = computed(() =>
         { label: 'Simpanan (DPK)', route: 'simpanan', cocok: 'simpanan' },
         { label: 'Pinjaman', route: 'pinjaman', cocok: 'pinjaman' },
         { label: 'Recovery', route: 'recovery', cocok: 'recovery' },
+        { label: 'PH & Net DG', route: 'recovery-ph', cocok: 'recovery-ph' },
         { label: 'Laba', route: 'laba', cocok: 'laba' },
         { label: 'Merchant', route: 'merchant', cocok: 'merchant' },
         { label: 'Admin', route: 'admin.index', cocok: 'admin.*', adminSaja: true },

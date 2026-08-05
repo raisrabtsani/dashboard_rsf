@@ -31,7 +31,7 @@ abstract class MerchantAktualImportService
         'id_cabang' => ['cabang_id', 'kode_cabang', 'cabang'],
         'id_uker' => ['uker_id', 'kode_uker', 'uker'],
         'kpi' => ['indikator', 'metrik', 'nama kpi', 'parameter'],
-        'tanggal' => ['tgl', 'date', 'periode'],
+        'tanggal' => ['tgl', 'date', 'periode', 'posisi', 'tanggal_posisi'],
         'actual' => ['aktual', 'nilai', 'value', 'jumlah', 'nominal'],
     ];
 

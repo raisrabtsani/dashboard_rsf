@@ -9,6 +9,7 @@ use App\Http\Controllers\Admin\RkaRecoveryController;
 use App\Http\Controllers\Admin\RkaSimpananController;
 use App\Http\Controllers\Admin\UploadEdcController;
 use App\Http\Controllers\Admin\UploadLabaController;
+use App\Http\Controllers\Admin\UploadPhController;
 use App\Http\Controllers\Admin\UploadPinjamanController;
 use App\Http\Controllers\Admin\UploadQrisController;
 use App\Http\Controllers\Admin\UploadRecoveryController;
@@ -18,6 +19,7 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\EdcController;
 use App\Http\Controllers\LabaDashboardController;
 use App\Http\Controllers\MerchantController;
+use App\Http\Controllers\PhNetDgDashboardController;
 use App\Http\Controllers\PinjamanDashboardController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\QrisController;
@@ -40,6 +42,7 @@ Route::middleware(['auth', 'scope'])->group(function () {
     Route::get('/dashboard/simpanan', [SimpananDashboardController::class, 'index'])->name('simpanan');
     Route::get('/dashboard/pinjaman', [PinjamanDashboardController::class, 'index'])->name('pinjaman');
     Route::get('/dashboard/recovery', [RecoveryDashboardController::class, 'index'])->name('recovery');
+    Route::get('/dashboard/recovery-ph', [PhNetDgDashboardController::class, 'index'])->name('recovery-ph');
     Route::get('/dashboard/laba', [LabaDashboardController::class, 'index'])->name('laba');
     Route::get('/dashboard/merchant', [MerchantController::class, 'index'])->name('merchant');
 
@@ -67,6 +70,19 @@ Route::middleware(['auth', 'scope'])->group(function () {
             Route::get('branch-pencapaian', [PinjamanDashboardController::class, 'branchPencapaian'])->name('branch-pencapaian');
             Route::get('cabang/{areaId}', [PinjamanDashboardController::class, 'cabang'])->name('cabang');
             Route::get('uker/{cabangId}', [PinjamanDashboardController::class, 'uker'])->name('uker');
+        });
+
+        /*
+         * PH & Net DG: dua "domain" dalam satu halaman, dipilih lewat parameter
+         * `mode` (ph|netdg). Net DG TIDAK punya tabel — dihitung on-the-fly.
+         * Tidak ada endpoint branch-pencapaian & tidak ada RKA di domain ini.
+         */
+        Route::prefix('recovery-ph')->name('recovery-ph.')->group(function () {
+            Route::get('filter-options', [PhNetDgDashboardController::class, 'filterOptions'])->name('filter-options');
+            Route::get('snapshot', [PhNetDgDashboardController::class, 'snapshot'])->name('snapshot');
+            Route::get('chart', [PhNetDgDashboardController::class, 'chart'])->name('chart');
+            Route::get('cabang/{areaId}', [PhNetDgDashboardController::class, 'cabang'])->name('cabang');
+            Route::get('uker/{cabangId}', [PhNetDgDashboardController::class, 'uker'])->name('uker');
         });
 
         // Recovery mengikuti pola baku Simpanan (berdimensi segmen, tanpa produk).
@@ -165,6 +181,16 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
         Route::get('unduh/{tanggal}', [UploadRecoveryController::class, 'unduh'])->name('unduh');
         Route::delete('bulk-month', [UploadRecoveryController::class, 'hapusBulan'])->name('bulk-month');
         Route::delete('{tanggal}', [UploadRecoveryController::class, 'hapusTanggal'])->name('hapus');
+    });
+
+    // Upload PH. Tidak ada RKA untuk domain ini.
+    Route::prefix('upload/ph')->name('upload.ph.')->group(function () {
+        Route::get('/', [UploadPhController::class, 'index'])->name('index');
+        Route::get('riwayat', [UploadPhController::class, 'riwayat'])->name('riwayat');
+        Route::post('/', [UploadPhController::class, 'upload'])->name('store');
+        Route::get('unduh/{periode}', [UploadPhController::class, 'unduh'])->name('unduh');
+        Route::delete('year/{tahun}', [UploadPhController::class, 'hapusTahun'])->name('hapus-tahun');
+        Route::delete('{periode}', [UploadPhController::class, 'hapusPeriode'])->name('hapus');
     });
 
     // Kelola RKA Recovery.

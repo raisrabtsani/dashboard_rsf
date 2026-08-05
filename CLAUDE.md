@@ -166,12 +166,25 @@ Acuan: [`UploadSimpananController`](app/Http/Controllers/Admin/UploadSimpananCon
   admin hanya memvalidasi berkas lalu memanggil service. Formatnya diumumkan lewat
   konstanta `KOLOM` di service dan dikirim ke halaman sebagai prop — satu sumber kebenaran
   untuk backend, UI, dan berkas unduhan.
+- **⚠️ Berkas sumber berisi baris per REKENING, bukan per unit kerja.** Satu kombinasi
+  granularitas bisa muncul puluhan kali (pernah 44 baris untuk satu
+  uker+produk+segmentasi+tanggal). Nilainya **DIJUMLAHKAN** sebelum disimpan — bukan
+  last-wins, bukan MAX. Menyimpan apa adanya melanggar indeks unique **dan** membuang
+  sebagian besar saldo. Berlaku untuk Simpanan dan Recovery; asumsikan berlaku juga
+  untuk domain lain sampai terbukti sebaliknya pada berkas nyatanya.
+  Laporkan `sumber` (baris berkas) di samping `baris` (baris tersimpan) di pesan sukses,
+  supaya admin tidak mengira ada data yang hilang.
 - **Nama kolom WAJIB toleran.** Berkas dari unit bisnis disusun manusia di Excel, jadi
   nama kolomnya tidak pernah persis: `Produk` vs `produk`, `" RKA "` (berspasi di dalam
   nama kolom!) vs `target`. Setiap importer mendeklarasikan konstanta `ALIAS` dan
   memetakannya lewat [`App\Support\PetaKolom`](app/Support/PetaKolom.php) — pencocokan
   abai huruf besar/kecil, spasi, dan underscore. **Menuntut nama kolom yang persis akan
   menolak berkas yang sebenarnya benar isinya.**
+- **Header gaya ekspor Tableau**: alat pelaporan menamai kolom tanggal
+  `"<bagian tanggal> of <Nama Field>"` — mis. `"Month, Day, Year of Posisi"`.
+  `PetaKolom` mencoba juga EKOR setelah ` of `, jadi cukup daftarkan nama field aslinya
+  (`posisi`) sebagai alias. Nilainya pun **M/D/Y** (`8/1/2026` = 1 Agustus, bukan
+  8 Januari) — `Carbon::parse()` sudah menanganinya, dan itu dikunci test.
 - **Bulan bisa berupa nama.** Berkas RKA menulis `Januari`, bukan `1`. Urai lewat
   [`App\Support\Bulan::uraiAtauGagal()`](app/Support/Bulan.php) (menerima angka 1-12,
   nama Indonesia, singkatan, dan nama Inggris). Jangan bikin tabel bulan sendiri.
@@ -269,6 +282,43 @@ Saat menambah domain ketiga, yang sudah dipakai bersama — **pakai ulang, janga
 
 Halaman admin per domain seharusnya hanya belasan baris yang meneruskan props. Kalau
 menyalin lebih dari itu, berarti ada yang belum diekstrak.
+
+### 🧭 KASUS KHUSUS: PH & Net DG (satu halaman, dua domain)
+
+Halaman `/dashboard/recovery-ph` memuat DUA domain lewat toggle `mode=ph|netdg`.
+Acuan: [`PhNetDgService`](app/Services/PhNetDgService.php),
+[`PhCsvImportService`](app/Services/PhCsvImportService.php),
+[`RecoveryPh/Index.vue`](resources/js/Pages/RecoveryPh/Index.vue).
+
+- **Net DG TIDAK punya tabel.** Dihitung on-the-fly dari posisi SML/NPL akhir bulan di
+  `pinjaman` + PH bulan itu. Jangan pernah membuat tabel `net_dg` — angkanya turunan.
+- **Rumusnya terkunci** [`NetDgFormulaTest`](tests/Feature/NetDgFormulaTest.php):
+
+  ```
+  NetDG_NPL(N) = NPL(N) − NPL(N−1) + PH(N)
+  NetDG_SML(N) = SML(N) − SML(N−1) + NetDG_NPL(N)   <-- yang ditampilkan
+               = Δ(SML+NPL)(N) + PH(N)              (bentuk teleskopik)
+  Akum(M)      = (SML+NPL)(M) − (SML+NPL)(Des lalu) + Σ PH
+  ```
+
+  Test memeriksa hasil rumus dua langkah DAN bentuk teleskopiknya; keduanya harus setuju.
+- **Deret tahun X butuh posisi pinjaman akhir Des X−1.** Tanpa itu Januari X `null`
+  (bukan 0), dan karena null menular ke akumulasi, seluruh deret YTD ikut `null`.
+  Akumulasi yang melompati bulan kosong akan understated tanpa tanda di layar.
+- **PH & Net DG TIDAK punya RKA.** Kartu dirender dengan `tampilkan-target="false"` —
+  tidak ada target, pencapaian, maupun gap. Jangan menambahkan tabel `rka_ph`.
+- **Rollup 855 DIIKUTKAN** di domain ini (segmen Menengah dikelola level Region), berbeda
+  dari Simpanan/Recovery yang mengecualikannya.
+- **Perilaku unggah PH berbeda dari domain lain**: periode yang sudah ada **DILEWATI**
+  (berkas unit bisnis kumulatif sepanjang tahun, jadi menolak seluruhnya berarti bulan
+  baru tak pernah bisa masuk). Sebaliknya `php artisan import:ph` **MENIMPA** — dipakai
+  untuk perbaikan data. Perbedaan ini disengaja.
+- **Baris PH tanpa uker valid di-fallback ke level cabang** (`uker_id = cabang_id`), tidak
+  dibuang — membuangnya membuat Net DG salah tanpa ada tandanya. Jumlah baris fallback
+  dilaporkan di pesan sukses.
+- **Chart combo dua tahun**: batang = nilai bulanan, garis = akumulasi;
+  Mentari `#71C5E8` = tahun lalu, Nusantara `#0857C3` = tahun berjalan. Label garis
+  akumulasi pada **Januari disembunyikan** (pasti menimpa label batangnya, nilainya sama).
 
 ### Konvensi frontend (berlaku semua domain)
 

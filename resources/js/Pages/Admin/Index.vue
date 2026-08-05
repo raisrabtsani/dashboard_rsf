@@ -34,6 +34,11 @@ const MENU = [
         route: 'admin.rka.recovery.index',
     },
     {
+        judul: 'Upload Data PH (Hapus Buku)',
+        deskripsi: 'Flow bulanan hapus buku. Baris debitur dijumlahkan; periode yang sudah ada DILEWATI (bukan ditolak). Tidak ada RKA.',
+        route: 'admin.upload.ph.index',
+    },
+    {
         judul: 'Upload Data Laba',
         deskripsi: 'Unggah laba KUMULATIF YTD per (segmen, tahun, bulan). Idempoten (upsert), riwayat per periode, hapus per periode/tahun.',
         route: 'admin.upload.laba.index',

@@ -223,6 +223,70 @@ class SimpananImportTest extends TestCase
         $this->assertStringContainsString('segmentasi', $respons->json('message'));
     }
 
+    public function test_baris_berulang_dijumlahkan_bukan_menabrak_kunci_unik(): void
+    {
+        // Berkas sumber berisi satu baris per REKENING, jadi satu kombinasi
+        // (uker, produk, segmentasi, tanggal) bisa muncul puluhan kali.
+        $berkas = $this->berkasCsv([
+            [self::CABANG, self::UKER_A, 'Deposito', 'Micro', '2026-08-01', 30_000_000],
+            [self::CABANG, self::UKER_A, 'Deposito', 'Micro', '2026-08-01', 3_340_000_000],
+            [self::CABANG, self::UKER_A, 'Deposito', 'Micro', '2026-08-01', 250_000_000],
+            [self::CABANG, self::UKER_A, 'Deposito', 'Micro', '2026-08-01', 100_000_000],
+        ]);
+
+        $respons = $this->unggah($berkas)->assertOk();
+
+        // 4 baris berkas -> 1 baris posisi.
+        $this->assertSame(1, Simpanan::query()->count());
+        $this->assertSame(4, $respons->json('hasil.sumber'));
+        $this->assertSame(1, $respons->json('hasil.baris'));
+
+        // Dijumlahkan, BUKAN last-wins dan bukan MAX.
+        $this->assertSame(3_720_000_000.0, (float) Simpanan::query()->value('saldo'));
+    }
+
+    public function test_penjumlahan_tidak_mencampur_kombinasi_yang_berbeda(): void
+    {
+        $berkas = $this->berkasCsv([
+            [self::CABANG, self::UKER_A, 'Deposito', 'Micro', '2026-08-01', 1_000_000],
+            [self::CABANG, self::UKER_A, 'Deposito', 'Micro', '2026-08-01', 2_000_000],
+            // beda segmentasi
+            [self::CABANG, self::UKER_A, 'Deposito', 'Ritel', '2026-08-01', 5_000_000],
+            // beda produk
+            [self::CABANG, self::UKER_A, 'Tabungan', 'Micro', '2026-08-01', 7_000_000],
+            // beda tanggal
+            [self::CABANG, self::UKER_A, 'Deposito', 'Micro', '2026-08-02', 9_000_000],
+        ]);
+
+        $this->unggah($berkas)->assertOk();
+
+        $this->assertSame(4, Simpanan::query()->count());
+        $this->assertSame(3_000_000.0, (float) Simpanan::query()
+            ->where(['produk' => 'Deposito', 'segmentasi' => 'Micro', 'tanggal' => '2026-08-01'])
+            ->value('saldo'));
+        $this->assertSame(24_000_000.0, (float) Simpanan::query()->sum('saldo'));
+    }
+
+    public function test_menerima_header_gaya_ekspor_tableau(): void
+    {
+        // Alat pelaporan menamai kolom tanggal "<bagian tanggal> of <Nama Field>";
+        // nilai memakai koma ribuan dan tanggal M/D/Y.
+        $isi = "id_cabang,id_uker,produk,segmentasi, Saldo ,\"Month, Day, Year of Posisi\"\n"
+            .self::CABANG.','.self::UKER_A.',Deposito,Micro," 30,000,000 ",8/1/2026'."\n"
+            .self::CABANG.','.self::UKER_A.',Tabungan,Ritel," 1,250,500 ",8/3/2026'."\n";
+
+        $this->unggah($this->berkasUnggahan($isi, '08. Full Simpanan Agustus 2026.csv'))->assertOk();
+
+        $this->assertSame(2, Simpanan::query()->count());
+
+        $deposito = Simpanan::query()->where('produk', 'Deposito')->sole();
+        // "8/1/2026" = Month/Day/Year -> 1 Agustus, BUKAN 8 Januari.
+        $this->assertSame('2026-08-01', $deposito->tanggal);
+        $this->assertSame(30_000_000.0, (float) $deposito->saldo);
+
+        $this->assertSame('2026-08-03', Simpanan::query()->where('produk', 'Tabungan')->value('tanggal'));
+    }
+
     public function test_format_ditentukan_dari_nama_asli_bukan_dari_berkas_sementara(): void
     {
         // REGRESI: PHP menyimpan unggahan sebagai "phpXXXX.tmp". Importer yang

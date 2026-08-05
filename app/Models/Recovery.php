@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\Segmen;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -18,30 +19,23 @@ class Recovery extends Model
     /** @use HasFactory<\Database\Factories\RecoveryFactory> */
     use HasFactory;
 
-    public const SEGMEN_MICRO = 'Micro';
+    /*
+     * Taksonomi segmen tinggal DELEGASI ke App\Support\Segmen — sumbernya satu,
+     * dipakai bersama Recovery, PH, dan Net DG. Konstanta di bawah dipertahankan
+     * karena namanya sudah bermakna di konteks Recovery.
+     */
 
-    public const SEGMEN_SME = 'SME';
+    public const SEGMEN_MICRO = Segmen::MICRO;
 
-    public const SEGMEN_CONSUMER = 'Consumer';
+    public const SEGMEN_SME = Segmen::SME;
+
+    public const SEGMEN_CONSUMER = Segmen::CONSUMER;
 
     /** Segmen KANONIK — urutan ini juga dipakai untuk mengurutkan kartu. */
-    public const SEGMEN = [self::SEGMEN_MICRO, self::SEGMEN_SME, self::SEGMEN_CONSUMER];
+    public const SEGMEN = Segmen::SEMUA;
 
-    /**
-     * Taksonomi MENTAH -> KANONIK. Satu-satunya sumber pemetaan segmen.
-     *
-     * Sumber data berubah antar tahun: mis. tahun lalu memakai "SME", tahun ini
-     * dipecah jadi "Small" + "Medium". Data mentah disimpan apa adanya di DB;
-     * pelipatan ke segmen kanonik dilakukan SAAT BACA (lihat kanonik()) supaya
-     * perbandingan YoY apple-to-apple dan data historis tidak perlu diutak-atik.
-     *
-     * @var array<string, list<string>>
-     */
-    public const SEGMEN_RAW = [
-        self::SEGMEN_MICRO => ['micro', 'mikro'],
-        self::SEGMEN_SME => ['sme', 'small', 'medium', 'kecil', 'menengah'],
-        self::SEGMEN_CONSUMER => ['consumer', 'konsumer', 'konsumtif'],
-    ];
+    /** @var array<string, list<string>> */
+    public const SEGMEN_RAW = Segmen::RAW;
 
     protected $table = 'recovery';
 
@@ -56,15 +50,7 @@ class Recovery extends Model
      */
     public static function kanonik(string $segmen): string
     {
-        $kunci = mb_strtolower(trim($segmen));
-
-        foreach (self::SEGMEN_RAW as $kanonik => $mentah) {
-            if (in_array($kunci, $mentah, true)) {
-                return $kanonik;
-            }
-        }
-
-        return trim($segmen);
+        return Segmen::kanonik($segmen) ?? trim($segmen);
     }
 
     protected function casts(): array

@@ -79,14 +79,37 @@ class PetaKolom
         $peta = [];
 
         foreach ($header as $kolom) {
-            $kunci = self::normal($kolom);
+            foreach (self::kandidat($kolom) as $kunci) {
+                if (isset($cari[$kunci])) {
+                    $peta[$kolom] = $cari[$kunci];
 
-            if (isset($cari[$kunci])) {
-                $peta[$kolom] = $cari[$kunci];
+                    break;
+                }
             }
         }
 
         return $peta;
+    }
+
+    /**
+     * Bentuk-bentuk nama yang dicoba untuk satu kolom, berurutan.
+     *
+     * Ekspor Tableau menamai kolom tanggal "<bagian tanggal> of <Nama Field>",
+     * mis. "Month, Day, Year of Posisi" — nama field aslinya ada di EKOR.
+     * Tanpa ini, berkas yang isinya benar ditolak hanya karena judul kolomnya
+     * dikarang oleh alat pelaporan.
+     *
+     * @return list<string>
+     */
+    private static function kandidat(string $kolom): array
+    {
+        $kandidat = [self::normal($kolom)];
+
+        if (preg_match('/\bof\s+(?<ekor>[^,]+)$/iu', trim($kolom), $m)) {
+            $kandidat[] = self::normal($m['ekor']);
+        }
+
+        return array_values(array_unique(array_filter($kandidat)));
     }
 
     private static function normal(string $teks): string

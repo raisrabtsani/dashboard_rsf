@@ -47,14 +47,23 @@ class UploadSimpananController extends Controller
             return response()->json(['message' => $e->getMessage()], $e->status);
         }
 
-        return response()->json([
-            'message' => sprintf(
-                '%d baris masuk untuk tanggal %s.',
-                $hasil['baris'],
-                implode(', ', $hasil['tanggal']),
-            ),
-            'hasil' => $hasil,
-        ]);
+        $pesan = sprintf(
+            '%s baris masuk untuk tanggal %s.',
+            number_format($hasil['baris'], 0, ',', '.'),
+            implode(', ', $hasil['tanggal']),
+        );
+
+        // Berkas sumber berisi baris per rekening; sebutkan penggabungannya
+        // supaya admin tidak mengira ada baris yang hilang.
+        if ($hasil['sumber'] > $hasil['baris']) {
+            $pesan .= sprintf(
+                ' %s baris berkas dijumlahkan jadi %s baris posisi (uker x produk x segmentasi x tanggal).',
+                number_format($hasil['sumber'], 0, ',', '.'),
+                number_format($hasil['baris'], 0, ',', '.'),
+            );
+        }
+
+        return response()->json(['message' => $pesan, 'hasil' => $hasil]);
     }
 
     public function unduh(string $tanggal): StreamedResponse

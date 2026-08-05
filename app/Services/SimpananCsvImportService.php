@@ -34,7 +34,7 @@ class SimpananCsvImportService
         'id_uker' => ['uker_id', 'kode_uker', 'uker'],
         'produk' => [],
         'segmentasi' => ['segmen'],
-        'tanggal' => ['tgl', 'date', 'periode'],
+        'tanggal' => ['tgl', 'date', 'periode', 'posisi', 'tanggal_posisi'],
         'saldo' => ['nilai', 'nominal', 'outstanding'],
     ];
 
@@ -44,29 +44,70 @@ class SimpananCsvImportService
     /**
      * Import satu berkas.
      *
-     * @return array{tanggal: list<string>, baris: int, total_saldo: string}
+     * @return array{tanggal: list<string>, baris: int, sumber: int, total_saldo: float}
      *
      * @throws ImportException 422 bila berkas cacat, 409 bila tanggalnya sudah ada
      */
     public function impor(string $path, ?string $namaAsli = null): array
     {
-        $baris = $this->baca($path, $namaAsli ?? basename($path));
+        $mentah = $this->baca($path, $namaAsli ?? basename($path));
 
-        $tanggal = $baris->pluck('tanggal')->unique()->sort()->values();
+        // Berkas sumber berisi BANYAK baris per kombinasi granularitas — satu
+        // baris per rekening/nasabah. Saldo DIJUMLAHKAN per
+        // (uker, produk, segmentasi, tanggal) sebelum disimpan; menyimpan apa
+        // adanya akan melanggar simpanan_unique dan membuang sebagian besar saldo.
+        $agregat = $this->jumlahkan($mentah);
+
+        $tanggal = $agregat->pluck('tanggal')->unique()->sort()->values();
 
         $this->tolakBilaTanggalSudahAda($tanggal);
 
-        DB::transaction(function () use ($baris) {
-            $baris->chunk(1000)->each(
+        DB::transaction(function () use ($agregat) {
+            $agregat->chunk(1000)->each(
                 fn (Collection $potongan) => Simpanan::query()->insert($potongan->values()->all()),
             );
         });
 
         return [
             'tanggal' => $tanggal->all(),
-            'baris' => $baris->count(),
-            'total_saldo' => (string) $baris->sum(fn (array $b) => (float) $b['saldo']),
+            'baris' => $agregat->count(),
+            'sumber' => $mentah->count(),
+            'total_saldo' => (float) $agregat->sum(fn (array $b) => $b['saldo']),
         ];
+    }
+
+    /**
+     * Jumlahkan saldo per kombinasi granularitas tabel `simpanan`.
+     *
+     * SUM, bukan last-wins dan bukan MAX: tiap baris berkas adalah komponen
+     * (rekening), bukan versi berbeda dari angka yang sama.
+     *
+     * @param  Collection<int, array<string, mixed>>  $mentah
+     * @return Collection<int, array<string, mixed>>
+     */
+    private function jumlahkan(Collection $mentah): Collection
+    {
+        $now = Carbon::now();
+
+        return $mentah
+            ->groupBy(fn (array $r) => implode('|', [
+                $r['uker_id'], $r['produk'], $r['segmentasi'], $r['tanggal'],
+            ]))
+            ->map(function (Collection $grup) use ($now) {
+                $pertama = $grup->first();
+
+                return [
+                    'cabang_id' => $pertama['cabang_id'],
+                    'uker_id' => $pertama['uker_id'],
+                    'produk' => $pertama['produk'],
+                    'segmentasi' => $pertama['segmentasi'],
+                    'tanggal' => $pertama['tanggal'],
+                    'saldo' => (float) $grup->sum(fn (array $r) => $r['saldo']),
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+            })
+            ->values();
     }
 
     /**

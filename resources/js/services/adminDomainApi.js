@@ -10,7 +10,7 @@ import axios from 'axios';
  * Domain baru cukup memanggil buatAdminApi('<domain>') — jangan menyalin file
  * service admin per domain.
  */
-export function buatAdminApi(domain) {
+export function buatAdminApi(domain, { param = 'tanggal', massal = 'bulan' } = {}) {
     const unggah = (namaRoute, berkas) => {
         const data = new FormData();
         data.append('berkas', berkas);
@@ -25,16 +25,24 @@ export function buatAdminApi(domain) {
 
         uploadAktual: (berkas) => unggah(`admin.upload.${domain}.store`, berkas),
 
-        hapusTanggal: (tanggal) =>
-            axios.delete(route(`admin.upload.${domain}.hapus`, { tanggal })).then((r) => r.data),
+        hapusTanggal: (nilai) =>
+            axios.delete(route(`admin.upload.${domain}.hapus`, { [param]: nilai })).then((r) => r.data),
 
+        /**
+         * Hapus massal. Domain harian memakai bulk-month (tahun+bulan); domain
+         * yang periodenya sudah bulanan (mis. PH) memakai hapus per tahun.
+         */
         hapusBulan: (tahun, bulan) =>
-            axios
-                .delete(route(`admin.upload.${domain}.bulk-month`), { data: { tahun, bulan } })
-                .then((r) => r.data),
+            massal === 'tahun'
+                ? axios
+                    .delete(route(`admin.upload.${domain}.hapus-tahun`, { tahun }))
+                    .then((r) => r.data)
+                : axios
+                    .delete(route(`admin.upload.${domain}.bulk-month`), { data: { tahun, bulan } })
+                    .then((r) => r.data),
 
         /** Unduhan ditangani browser lewat navigasi biasa. */
-        urlUnduh: (tanggal) => route(`admin.upload.${domain}.unduh`, { tanggal }),
+        urlUnduh: (nilai) => route(`admin.upload.${domain}.unduh`, { [param]: nilai }),
 
         // --- RKA ---
         fetchRka: () =>

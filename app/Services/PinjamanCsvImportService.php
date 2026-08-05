@@ -36,7 +36,7 @@ class PinjamanCsvImportService
         'segmen' => ['segment'],
         'segmentasi' => [],
         'kualitas' => ['kolektibilitas', 'kol'],
-        'tanggal' => ['tgl', 'date', 'periode'],
+        'tanggal' => ['tgl', 'date', 'periode', 'posisi', 'tanggal_posisi'],
         'baki_debet' => ['bakidebet', 'baki', 'os', 'outstanding', 'nilai', 'nominal'],
     ];
 

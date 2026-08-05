@@ -41,7 +41,7 @@ class RecoveryCsvImportService
         'id_cabang' => ['cabang_id', 'kode_cabang', 'cabang'],
         'id_uker' => ['uker_id', 'kode_uker', 'uker'],
         'segmen' => ['segment', 'segmentasi'],
-        'tanggal' => ['tgl', 'date', 'periode'],
+        'tanggal' => ['tgl', 'date', 'periode', 'posisi', 'tanggal_posisi'],
         'actual' => ['aktual', 'realisasi', 'recovery', 'nilai', 'nominal'],
     ];
 
