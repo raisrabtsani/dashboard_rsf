@@ -33,6 +33,9 @@ class HandleInertiaRequests extends Middleware
 
         return [
             ...parent::share($request),
+            // Ambang idle auto-logout (menit) — cermin SESSION_LIFETIME supaya
+            // sisi klien & server memakai angka yang sama. Lihat useIdleLogout.
+            'sessionLifetime' => (int) config('session.lifetime'),
             'auth' => [
                 // Sengaja dikurasi, bukan seluruh model: hanya yang dibutuhkan UI.
                 // access_level dipakai frontend untuk menyembunyikan filter yang

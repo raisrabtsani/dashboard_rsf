@@ -13,7 +13,7 @@ defineProps({
     <span class="ms-1 inline-flex flex-col leading-none" aria-hidden="true">
         <svg
             class="h-2 w-2"
-            :class="arah === 'asc' ? 'text-indigo-600' : 'text-gray-300'"
+            :class="arah === 'asc' ? 'text-brand-600' : 'text-gray-300'"
             viewBox="0 0 8 5"
             fill="currentColor"
         >
@@ -21,7 +21,7 @@ defineProps({
         </svg>
         <svg
             class="mt-px h-2 w-2"
-            :class="arah === 'desc' ? 'text-indigo-600' : 'text-gray-300'"
+            :class="arah === 'desc' ? 'text-brand-600' : 'text-gray-300'"
             viewBox="0 0 8 5"
             fill="currentColor"
         >

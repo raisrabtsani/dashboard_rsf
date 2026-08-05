@@ -241,7 +241,7 @@ onMounted(async () => {
                         class="rounded-md px-4 py-2 text-sm font-semibold transition"
                         :class="
                             tab === t.key
-                                ? 'bg-indigo-600 text-white'
+                                ? 'bg-brand-600 text-white'
                                 : 'text-gray-600 hover:bg-gray-100'
                         "
                         :title="t.keterangan"

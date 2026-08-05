@@ -61,12 +61,12 @@ const fmtDelta = (v) => (props.rupiah ? formatDelta(v) : formatDeltaJumlah(v));
 </script>
 
 <template>
-    <div class="rounded-lg bg-white p-4 shadow ring-1 ring-gray-100">
+    <div class="card card-cq">
         <p class="text-xs font-medium uppercase tracking-wide text-gray-500">
             {{ judul }}
         </p>
 
-        <p class="mt-1 text-2xl font-semibold tabular-nums text-gray-900">
+        <p class="kpi-nilai mt-1 font-semibold tabular-nums text-gray-900">
             {{ fmtNilai(nilai) }}
         </p>
 

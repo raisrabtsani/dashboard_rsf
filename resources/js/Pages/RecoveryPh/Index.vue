@@ -141,7 +141,7 @@ onMounted(async () => {
                             class="rounded-md px-4 py-1.5 text-sm font-semibold transition"
                             :class="
                                 mode === m.key
-                                    ? 'bg-white text-indigo-700 shadow'
+                                    ? 'bg-white text-brand-700 shadow'
                                     : 'text-gray-500 hover:text-gray-700'
                             "
                             @click="mode = m.key"

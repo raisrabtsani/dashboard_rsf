@@ -7,11 +7,40 @@ import NavLink from '@/Components/NavLink.vue';
 import ResponsiveNavLink from '@/Components/ResponsiveNavLink.vue';
 import { Link, usePage } from '@inertiajs/vue3';
 import { computed } from 'vue';
+import { useIdleLogout } from '@/composables/useIdleLogout';
 
 const showingNavigationDropdown = ref(false);
 
-const isAdmin = computed(() => usePage().props.auth?.user?.role === 'admin');
-const levelAkses = computed(() => usePage().props.auth?.user?.access_level ?? 'LEVEL_UKER');
+const user = computed(() => usePage().props.auth?.user ?? null);
+const isAdmin = computed(() => user.value?.role === 'admin');
+const levelAkses = computed(() => user.value?.access_level ?? 'LEVEL_UKER');
+
+// Auto-logout saat idle, sinkron dengan SESSION_LIFETIME server (menit).
+useIdleLogout(usePage().props.sessionLifetime ?? 10);
+
+/*
+ * WATERMARK identitas — nama & username user login, diulang diagonal penuh layar
+ * sebagai jejak anti-bocor screenshot. Digambar lewat SVG tile agar benar-benar
+ * memenuhi layar (background-repeat). pointer-events/aria diatur di kelas .watermark
+ * & atribut aria-hidden pada elemennya.
+ */
+const escXml = (s) =>
+    String(s).replace(
+        /[<>&'"]/g,
+        (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' })[c],
+    );
+
+const watermarkStyle = computed(() => {
+    if (!user.value) return { display: 'none' };
+
+    const teks = escXml(`${user.value.name} · ${user.value.username}`);
+    const svg =
+        `<svg xmlns='http://www.w3.org/2000/svg' width='340' height='160'>` +
+        `<text x='8' y='90' font-family='Inter, sans-serif' font-size='15' font-weight='600' ` +
+        `fill='#0f172a' fill-opacity='0.05'>${teks}</text></svg>`;
+
+    return { backgroundImage: `url("data:image/svg+xml,${encodeURIComponent(svg)}")` };
+});
 
 /**
  * Menu utama. Domain dashboard berikutnya cukup ditambahkan di sini.
@@ -39,6 +68,9 @@ const MENU = computed(() =>
 
 <template>
     <div>
+        <!-- Watermark anti-bocor screenshot; non-interaktif & disembunyikan dari screen reader. -->
+        <div v-if="user" class="watermark" :style="watermarkStyle" aria-hidden="true" />
+
         <div class="min-h-screen bg-gray-100">
             <nav
                 class="border-b border-gray-100 bg-white"

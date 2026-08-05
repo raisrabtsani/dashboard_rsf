@@ -15,6 +15,7 @@ use App\Http\Controllers\Admin\UploadQrisController;
 use App\Http\Controllers\Admin\UploadRecoveryController;
 use App\Http\Controllers\Admin\UploadSimpananController;
 use App\Http\Controllers\Admin\UploadSimpananHourlyController;
+use App\Http\Controllers\Admin\UserActivityController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\EdcController;
@@ -299,6 +300,12 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
         Route::get('data', [RkaSimpananController::class, 'data'])->name('data');
         Route::post('/', [RkaSimpananController::class, 'upload'])->name('store');
         Route::delete('year/{tahun}', [RkaSimpananController::class, 'hapusTahun'])->name('hapus-tahun');
+    });
+
+    // Aktivitas pengguna — online sekarang (dari sessions) + terakhir aktif per user.
+    Route::prefix('activity')->name('activity.')->group(function () {
+        Route::get('/', [UserActivityController::class, 'index'])->name('index');
+        Route::get('data', [UserActivityController::class, 'data'])->name('data');
     });
 
     // Manajemen user.

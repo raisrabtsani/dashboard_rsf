@@ -1,3 +1,93 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * Kelas komponen bersama — satu sumber gaya btn/card/badge/table supaya identitas
+ * merek konsisten di seluruh halaman. Pakai kelas ini, jangan sebar utilitas
+ * warna merek langsung di komponen.
+ */
+@layer components {
+    /* Kartu putih baku. `card-cq` menjadikannya wadah container-query (lihat .kpi-nilai). */
+    .card {
+        @apply rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-100;
+    }
+    .card-cq {
+        container-type: inline-size;
+    }
+
+    /* Tombol */
+    .btn {
+        @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
+    }
+    .btn-primary {
+        @apply bg-brand-600 text-white hover:bg-brand-700 focus:ring-brand-500;
+    }
+    .btn-ghost {
+        @apply border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:ring-brand-500;
+    }
+
+    /* Badge / pil */
+    .badge {
+        @apply inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold tabular-nums ring-1;
+    }
+    .badge-brand {
+        @apply bg-brand-50 text-brand-700 ring-brand-200;
+    }
+    .badge-positif {
+        @apply bg-emerald-50 text-emerald-700 ring-emerald-200;
+    }
+    .badge-negatif {
+        @apply bg-rose-50 text-rose-700 ring-rose-200;
+    }
+    .badge-netral {
+        @apply bg-gray-50 text-gray-500 ring-gray-200;
+    }
+
+    /* Tabel data */
+    .table-data {
+        @apply min-w-full divide-y divide-gray-100 text-sm;
+    }
+    .table-data thead {
+        @apply bg-gray-50;
+    }
+    .table-data th {
+        @apply px-4 py-2 text-xs font-semibold text-gray-500;
+    }
+    .table-data tbody {
+        @apply divide-y divide-gray-50;
+    }
+    .table-data td {
+        @apply px-4 py-2;
+    }
+
+    /*
+     * Ukuran nilai KPI mengikuti LEBAR KARTU lewat container query (cqw), bukan
+     * viewport — jadi kartu terbaca pas di HP, desktop, maupun videotron tanpa
+     * memotong (truncate) angkanya. clamp() menjaga batas bawah/atas yang wajar.
+     * Wadahnya WAJIB punya `card-cq` (container-type: inline-size).
+     */
+    .kpi-nilai {
+        font-size: clamp(1.125rem, 9cqw, 2.5rem);
+        line-height: 1.1;
+    }
+}
+
+/*
+ * Watermark identitas: nama user login, tipis & diagonal, berulang penuh layar.
+ * Jejak anti-bocor screenshot — TIDAK boleh mengganggu interaksi (pointer-events
+ * none) dan disembunyikan dari pembaca layar (aria-hidden di elemennya).
+ * Elemen dibuat 2x viewport lalu diputar agar sudut-sudutnya tetap tertutup.
+ */
+.watermark {
+    position: fixed;
+    inset: -50%;
+    width: 200%;
+    height: 200%;
+    z-index: 30;
+    pointer-events: none;
+    user-select: none;
+    transform: rotate(-30deg);
+    background-repeat: repeat;
+    background-position: center;
+}

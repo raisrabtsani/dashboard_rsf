@@ -113,9 +113,9 @@ onMounted(async () => {
         </template>
 
         <div class="py-8">
-            <div class="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
+            <div class="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8 2xl:max-w-[1600px] tv:max-w-[1800px]">
                 <!-- Filter bar -->
-                <div class="rounded-lg bg-white p-4 shadow ring-1 ring-gray-100">
+                <div class="card">
                     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
                         <label v-if="scope.bolehPilihArea.value" class="block">
                             <span class="text-xs font-medium text-gray-500">Area</span>
@@ -161,15 +161,11 @@ onMounted(async () => {
 
                 <!-- Rasio utama -->
                 <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <div
-                        v-for="r in rasio"
-                        :key="r.key"
-                        class="rounded-lg bg-white p-4 shadow ring-1 ring-gray-100"
-                    >
+                    <div v-for="r in rasio" :key="r.key" class="card card-cq">
                         <p class="text-xs font-medium uppercase tracking-wide text-gray-500">
                             {{ r.judul }}
                         </p>
-                        <p class="mt-1 text-3xl font-semibold tabular-nums text-gray-900">
+                        <p class="kpi-nilai mt-1 font-semibold tabular-nums text-gray-900">
                             {{ formatPct(r.nilai) }}
                         </p>
                         <p class="mt-1 text-[11px] text-gray-400">
@@ -186,7 +182,7 @@ onMounted(async () => {
                             v-for="k in kartu"
                             :key="k.key"
                             :href="route(k.route)"
-                            class="group block rounded-lg ring-1 ring-transparent transition hover:ring-2 hover:ring-indigo-200"
+                            class="group block rounded-lg ring-1 ring-transparent transition hover:ring-2 hover:ring-brand-200"
                         >
                             <KpiCard
                                 :judul="k.judul"
@@ -203,7 +199,7 @@ onMounted(async () => {
                             <p class="px-1 pt-1 text-[10px] text-gray-400">
                                 <span v-if="k.per">posisi {{ formatPer(k.per) }}</span>
                                 <span v-else>belum ada data</span>
-                                <span class="text-indigo-400 opacity-0 transition group-hover:opacity-100"> · buka →</span>
+                                <span class="text-brand-500 opacity-0 transition group-hover:opacity-100"> · buka →</span>
                             </p>
                         </Link>
                     </div>

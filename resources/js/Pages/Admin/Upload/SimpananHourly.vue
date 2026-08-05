@@ -137,7 +137,7 @@ onMounted(muat);
                             id="berkas"
                             type="file"
                             accept=".csv,.txt,.xlsx,.xls"
-                            class="block text-sm text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-indigo-700 hover:file:bg-indigo-100"
+                            class="block text-sm text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-brand-50 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-brand-700 hover:file:bg-brand-100"
                             @change="berkas = $event.target.files[0] ?? null"
                         />
                         <label class="block">
@@ -150,7 +150,7 @@ onMounted(muat);
                         </label>
                         <button
                             type="button"
-                            class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                            class="rounded-md bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
                             :disabled="!berkas || mengunggah"
                             @click="kirim"
                         >

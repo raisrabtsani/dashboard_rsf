@@ -220,7 +220,7 @@ onMounted(async () => {
                         :key="t.key"
                         type="button"
                         class="rounded-md px-5 py-2 text-sm font-semibold transition"
-                        :class="toggle === t.key ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-100'"
+                        :class="toggle === t.key ? 'bg-brand-600 text-white' : 'text-gray-600 hover:bg-gray-100'"
                         @click="gantiToggle(t.key)"
                     >
                         {{ t.label }}

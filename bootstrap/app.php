@@ -14,6 +14,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->web(append: [
             App\Http\Middleware\HandleInertiaRequests::class,
             Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
+            // Catat last_seen_at user (throttle 60s) untuk Admin > Aktivitas Pengguna.
+            App\Http\Middleware\TrackUserActivity::class,
         ]);
 
         $middleware->alias([

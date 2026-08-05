@@ -73,6 +73,11 @@ const MENU = [
         deskripsi: 'CRUD akun, penetapan kantor, kunci/buka akun, ganti password.',
         route: 'admin.users.index',
     },
+    {
+        judul: 'Aktivitas Pengguna',
+        deskripsi: 'Siapa online sekarang (aktivitas ≤ 5 menit dari tabel sessions) dan kapan tiap akun terakhir aktif.',
+        route: 'admin.activity.index',
+    },
 ];
 </script>
 
@@ -91,7 +96,7 @@ const MENU = [
                         v-for="m in MENU"
                         :key="m.route"
                         :href="route(m.route)"
-                        class="block rounded-lg bg-white p-5 shadow ring-1 ring-gray-100 transition hover:ring-indigo-300"
+                        class="block rounded-lg bg-white p-5 shadow-sm ring-1 ring-gray-100 transition hover:ring-brand-300"
                     >
                         <h3 class="text-sm font-semibold text-gray-800">{{ m.judul }}</h3>
                         <p class="mt-1 text-xs text-gray-500">{{ m.deskripsi }}</p>

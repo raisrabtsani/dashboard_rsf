@@ -246,7 +246,7 @@ onMounted(muat);
                         </button>
                         <button
                             type="button"
-                            class="ms-auto rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                            class="ms-auto rounded-md bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700"
                             @click="bukaBaru"
                         >
                             + Tambah User
@@ -255,7 +255,7 @@ onMounted(muat);
                 </div>
 
                 <!-- Form -->
-                <div v-if="formTampil" class="rounded-lg bg-white p-4 shadow ring-2 ring-indigo-200">
+                <div v-if="formTampil" class="rounded-lg bg-white p-4 shadow ring-2 ring-brand-200">
                     <h3 class="text-sm font-semibold text-gray-700">
                         {{ sedangEdit ? `Edit User: ${form.username}` : 'Tambah User Baru' }}
                     </h3>
@@ -319,7 +319,7 @@ onMounted(muat);
                     <div class="mt-4 flex gap-3">
                         <button
                             type="button"
-                            class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                            class="rounded-md bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
                             :disabled="menyimpan"
                             @click="simpan"
                         >
@@ -367,7 +367,7 @@ onMounted(muat);
                                             class="rounded-full px-2 py-0.5 text-xs font-semibold"
                                             :class="
                                                 u.role === 'admin'
-                                                    ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200'
+                                                    ? 'bg-brand-50 text-brand-700 ring-1 ring-brand-200'
                                                     : 'bg-gray-50 text-gray-600 ring-1 ring-gray-200'
                                             "
                                         >
@@ -389,7 +389,7 @@ onMounted(muat);
                                         </span>
                                     </td>
                                     <td class="whitespace-nowrap px-4 py-2 text-right">
-                                        <button type="button" class="text-indigo-600 hover:underline" @click="bukaEdit(u)">
+                                        <button type="button" class="text-brand-600 hover:underline" @click="bukaEdit(u)">
                                             Edit
                                         </button>
                                         <button
