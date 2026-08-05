@@ -25,7 +25,7 @@ class MasterSeederTest extends TestCase
     {
         $this->assertDatabaseHas('region', [
             'id' => Region::OFFICE_ID,
-            'nama' => 'RO Pekanbaru',
+            'nama' => 'Region Office 7 Jakarta 2',
         ]);
     }
 
@@ -55,7 +55,7 @@ class MasterSeederTest extends TestCase
         $this->assertSame(Region::OFFICE_ID, $batamCenter->region_id);
         $this->assertSame(3, $batamCenter->area_id);
         $this->assertSame('Batam Center', $batamCenter->area->nama);
-        $this->assertSame('RO Pekanbaru', $batamCenter->region->nama);
+        $this->assertSame('Region Office 7 Jakarta 2', $batamCenter->region->nama);
     }
 
     public function test_satu_uker_per_baris_code_uker_csv_plus_rollup_region(): void
@@ -118,7 +118,7 @@ class MasterSeederTest extends TestCase
 
         $this->assertSame(1079, $uker->cabang->id);
         $this->assertSame('Pekanbaru Tuanku Tambusai', $uker->area->nama);
-        $this->assertSame('RO Pekanbaru', $uker->region->nama);
+        $this->assertSame('Region Office 7 Jakarta 2', $uker->region->nama);
 
         $this->assertSame(7, Area::query()->find(1)->cabang()->count());
         $this->assertSame(23, Region::query()->find(Region::OFFICE_ID)->cabang()->count());
