@@ -2,13 +2,16 @@
 
 use App\Http\Controllers\Admin\AdminController;
 use App\Http\Controllers\Admin\RkaPinjamanController;
+use App\Http\Controllers\Admin\RkaRecoveryController;
 use App\Http\Controllers\Admin\RkaSimpananController;
 use App\Http\Controllers\Admin\UploadPinjamanController;
+use App\Http\Controllers\Admin\UploadRecoveryController;
 use App\Http\Controllers\Admin\UploadSimpananController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\PinjamanDashboardController;
 use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\RecoveryDashboardController;
 use App\Http\Controllers\SimpananDashboardController;
 use Illuminate\Support\Facades\Route;
 
@@ -26,6 +29,7 @@ Route::middleware(['auth', 'scope'])->group(function () {
 
     Route::get('/dashboard/simpanan', [SimpananDashboardController::class, 'index'])->name('simpanan');
     Route::get('/dashboard/pinjaman', [PinjamanDashboardController::class, 'index'])->name('pinjaman');
+    Route::get('/dashboard/recovery', [RecoveryDashboardController::class, 'index'])->name('recovery');
 
     Route::prefix('api')->name('api.')->group(function () {
         Route::get('scope', [DashboardController::class, 'scope'])->name('scope');
@@ -51,6 +55,16 @@ Route::middleware(['auth', 'scope'])->group(function () {
             Route::get('branch-pencapaian', [PinjamanDashboardController::class, 'branchPencapaian'])->name('branch-pencapaian');
             Route::get('cabang/{areaId}', [PinjamanDashboardController::class, 'cabang'])->name('cabang');
             Route::get('uker/{cabangId}', [PinjamanDashboardController::class, 'uker'])->name('uker');
+        });
+
+        // Recovery mengikuti pola baku Simpanan (berdimensi segmen, tanpa produk).
+        Route::prefix('recovery')->name('recovery.')->group(function () {
+            Route::get('filter-options', [RecoveryDashboardController::class, 'filterOptions'])->name('filter-options');
+            Route::get('snapshot', [RecoveryDashboardController::class, 'snapshot'])->name('snapshot');
+            Route::get('chart', [RecoveryDashboardController::class, 'chart'])->name('chart');
+            Route::get('branch-pencapaian', [RecoveryDashboardController::class, 'branchPencapaian'])->name('branch-pencapaian');
+            Route::get('cabang/{areaId}', [RecoveryDashboardController::class, 'cabang'])->name('cabang');
+            Route::get('uker/{cabangId}', [RecoveryDashboardController::class, 'uker'])->name('uker');
         });
     });
 });
@@ -94,6 +108,24 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
         Route::get('data', [RkaPinjamanController::class, 'data'])->name('data');
         Route::post('/', [RkaPinjamanController::class, 'upload'])->name('store');
         Route::delete('year/{tahun}', [RkaPinjamanController::class, 'hapusTahun'])->name('hapus-tahun');
+    });
+
+    // Upload data aktual Recovery.
+    Route::prefix('upload/recovery')->name('upload.recovery.')->group(function () {
+        Route::get('/', [UploadRecoveryController::class, 'index'])->name('index');
+        Route::get('riwayat', [UploadRecoveryController::class, 'riwayat'])->name('riwayat');
+        Route::post('/', [UploadRecoveryController::class, 'upload'])->name('store');
+        Route::get('unduh/{tanggal}', [UploadRecoveryController::class, 'unduh'])->name('unduh');
+        Route::delete('bulk-month', [UploadRecoveryController::class, 'hapusBulan'])->name('bulk-month');
+        Route::delete('{tanggal}', [UploadRecoveryController::class, 'hapusTanggal'])->name('hapus');
+    });
+
+    // Kelola RKA Recovery.
+    Route::prefix('rka/recovery')->name('rka.recovery.')->group(function () {
+        Route::get('/', [RkaRecoveryController::class, 'index'])->name('index');
+        Route::get('data', [RkaRecoveryController::class, 'data'])->name('data');
+        Route::post('/', [RkaRecoveryController::class, 'upload'])->name('store');
+        Route::delete('year/{tahun}', [RkaRecoveryController::class, 'hapusTahun'])->name('hapus-tahun');
     });
 
     // Kelola RKA Simpanan.

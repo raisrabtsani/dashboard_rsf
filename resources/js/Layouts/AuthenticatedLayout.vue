@@ -23,6 +23,7 @@ const MENU = computed(() =>
         { label: 'Dashboard', route: 'dashboard', cocok: 'dashboard' },
         { label: 'Simpanan (DPK)', route: 'simpanan', cocok: 'simpanan' },
         { label: 'Pinjaman', route: 'pinjaman', cocok: 'pinjaman' },
+        { label: 'Recovery', route: 'recovery', cocok: 'recovery' },
         { label: 'Admin', route: 'admin.index', cocok: 'admin.*', adminSaja: true },
     ].filter((m) => !m.adminSaja || isAdmin.value),
 );

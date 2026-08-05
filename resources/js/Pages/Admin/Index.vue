@@ -24,6 +24,16 @@ const MENU = [
         route: 'admin.rka.pinjaman.index',
     },
     {
+        judul: 'Upload Data Recovery',
+        deskripsi: 'Unggah penagihan hapus buku per segmen. Baris debitur dijumlahkan per (cabang, uker, segmen, tanggal); unggah ulang menimpa (upsert).',
+        route: 'admin.upload.recovery.index',
+    },
+    {
+        judul: 'RKA Recovery',
+        deskripsi: 'Unggah target per tahun (per segmen), ringkasan, hapus per tahun.',
+        route: 'admin.rka.recovery.index',
+    },
+    {
         judul: 'Manajemen User',
         deskripsi: 'CRUD akun, penetapan kantor, kunci/buka akun, ganti password.',
         route: 'admin.users.index',
@@ -54,8 +64,7 @@ const MENU = [
                 </div>
 
                 <p class="mt-6 text-xs text-gray-400">
-                    Domain lain (Pinjaman, Recovery, Laba, Merchant) menyusul mengikuti pola
-                    yang sama.
+                    Domain lain (Laba, Merchant) menyusul mengikuti pola yang sama.
                 </p>
             </div>
         </div>
