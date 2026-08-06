@@ -21,6 +21,8 @@ export const fetchSnapshot = (filter) => ambil('api.recovery-ph.snapshot', filte
 
 export const fetchChart = (filter) => ambil('api.recovery-ph.chart', filter);
 
+export const fetchBranchPencapaian = (filter) => ambil('api.recovery-ph.branch-pencapaian', filter);
+
 export const fetchCabang = (areaId) =>
     axios.get(route('api.recovery-ph.cabang', { areaId })).then((r) => r.data);
 

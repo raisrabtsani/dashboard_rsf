@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Exceptions\ImportException;
 use App\Models\Laba;
 use App\Models\Uker;
+use App\Services\Concerns\MelaporkanImport;
 use App\Support\Bulan;
 use App\Support\PetaKolom;
 use App\Support\Satuan;
@@ -17,7 +18,13 @@ use Illuminate\Support\Facades\DB;
  * Import data AKTUAL Laba dari CSV/Excel — BULANAN, nilai KUMULATIF YTD.
  *
  * Format (long), nilai RUPIAH PENUH (boleh negatif = rugi):
- *   id_cabang | id_uker | segmen | tahun | bulan | laba
+ *   id_cabang | id_uker | uko | tahun | bulan | laba
+ *
+ * `uko` = jenis kantor operasional (Branch Office / Sub-Branch Office / Micro /
+ * Region Office), menjadi dimensi segmen dashboard. Nilainya diambil apa adanya
+ * dari berkas (pelabelan bisnis, bukan tipe uker master) lalu disimpan ke kolom
+ * DB `segmen`. Kolom `Unit Kerja` (nama uker) di berkas hanya informatif —
+ * diabaikan; nama tetap dari master.
  *
  * Berbeda dari importer harian Simpanan: tidak ada tanggal, dan datanya
  * di-UPSERT pada kunci `laba_unique` (uker, segmen, tahun, bulan) sehingga
@@ -26,20 +33,22 @@ use Illuminate\Support\Facades\DB;
  */
 class LabaCsvImportService
 {
+    use MelaporkanImport;
+
     /**
      * @var array<string, list<string>>
      */
     public const ALIAS = [
         'id_cabang' => ['cabang_id', 'kode_cabang', 'cabang'],
         'id_uker' => ['uker_id', 'kode_uker', 'uker'],
-        'segmen' => ['segment', 'segmentasi'],
+        'uko' => ['segmen', 'segment', 'segmentasi', 'jenis_kantor'],
         'tahun' => ['thn', 'year'],
         'bulan' => ['bln', 'month', 'periode'],
         'laba' => ['profit', 'nilai', 'nominal', 'ytd'],
     ];
 
     /** @var list<string> */
-    public const KOLOM = ['id_cabang', 'id_uker', 'segmen', 'tahun', 'bulan', 'laba'];
+    public const KOLOM = ['id_cabang', 'id_uker', 'uko', 'tahun', 'bulan', 'laba'];
 
     /**
      * @return array{tahun: list<int>, baris: int, dilewati: int, total: float}
@@ -47,10 +56,6 @@ class LabaCsvImportService
     public function impor(string $path, ?string $namaAsli = null): array
     {
         ['baris' => $baris, 'dilewati' => $dilewati] = $this->baca($path, $namaAsli ?? basename($path));
-
-        if ($baris->isEmpty()) {
-            throw ImportException::berkas('Tidak ada baris laba yang bisa diimpor dari berkas ini.');
-        }
 
         DB::transaction(function () use ($baris) {
             $baris->chunk(1000)->each(fn (Collection $potongan) => Laba::query()->upsert(
@@ -65,6 +70,7 @@ class LabaCsvImportService
             'baris' => $baris->count(),
             'dilewati' => $dilewati,
             'total' => (float) $baris->sum(fn (array $b) => $b['laba']),
+            'laporan' => $this->laporanImport(),
         ];
     }
 
@@ -73,7 +79,7 @@ class LabaCsvImportService
      *
      * @return list<array<string, mixed>>
      */
-    public function riwayat(int $batas = 60): array
+    public function riwayat(int $batas = 1000): array
     {
         return Laba::query()
             ->groupBy('tahun', 'bulan')
@@ -109,7 +115,7 @@ class LabaCsvImportService
             ->map(fn (Laba $l) => [
                 'id_cabang' => $l->cabang_id,
                 'id_uker' => $l->uker_id,
-                'segmen' => $l->segmen,
+                'uko' => $l->segmen,
                 'tahun' => $l->tahun,
                 'bulan' => $l->bulan,
                 'laba' => $l->laba,
@@ -139,19 +145,19 @@ class LabaCsvImportService
         $now = Carbon::now();
         $dilewati = 0;
 
-        $hasil = $baris->map(function (array $r, int $i) use ($ukerValid, $now, &$dilewati) {
+        $hasil = $this->petakanBarisAman($baris, function (array $r, int $i) use ($ukerValid, $now, &$dilewati) {
             $nomor = $i + 2;
 
             $ukerId = (int) trim((string) $r['id_uker']);
-            $segmen = trim((string) $r['segmen']);
+            $uko = trim((string) $r['uko']);
             $tahun = (int) trim((string) $r['tahun']);
 
             if (! $ukerValid->has($ukerId)) {
                 throw ImportException::berkas("Baris {$nomor}: id_uker {$ukerId} tidak ada di master uker.");
             }
 
-            if ($segmen === '') {
-                throw ImportException::berkas("Baris {$nomor}: kolom segmen kosong.");
+            if ($uko === '') {
+                throw ImportException::berkas("Baris {$nomor}: kolom uko kosong.");
             }
 
             if ($tahun < 2000 || $tahun > 2100) {
@@ -169,14 +175,15 @@ class LabaCsvImportService
                 // Master adalah sumber kebenaran hubungan uker->cabang.
                 'cabang_id' => $ukerValid[$ukerId],
                 'uker_id' => $ukerId,
-                'segmen' => $segmen,
+                // Label uko dari berkas disimpan ke kolom segmen (dimensi generik).
+                'segmen' => $uko,
                 'tahun' => $tahun,
                 'bulan' => Bulan::uraiAtauGagal((string) $r['bulan'], $nomor),
                 'laba' => $this->angka($r['laba'], $nomor),
                 'created_at' => $now,
                 'updated_at' => $now,
             ];
-        })->filter()->values();
+        });
 
         $this->tolakBarisKembar($hasil, $namaBerkas);
 
@@ -210,7 +217,7 @@ class LabaCsvImportService
 
         if ($kembar->isNotEmpty()) {
             throw ImportException::berkas(sprintf(
-                '%s memuat %d kombinasi uker+segmen+tahun+bulan yang kembar, contoh: %s. '.
+                '%s memuat %d kombinasi uker+uko+tahun+bulan yang kembar, contoh: %s. '.
                 'Gabungkan dulu baris kembar tersebut.',
                 $namaBerkas,
                 $kembar->count(),

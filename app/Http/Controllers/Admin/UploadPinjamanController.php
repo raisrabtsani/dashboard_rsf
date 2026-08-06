@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use Throwable;
 
 /**
  * Controller TIPIS — parsing berkas ada di PinjamanCsvImportService.
@@ -31,10 +32,41 @@ class UploadPinjamanController extends Controller
         return response()->json(['riwayat' => $this->service->riwayat()]);
     }
 
+    public function preview(Request $request): JsonResponse
+    {
+        $request->validate([
+            'berkas' => ['required', 'file', 'mimes:'.implode(',', Spreadsheet::EKSTENSI), 'max:204800'],
+        ], [
+            'berkas.max' => 'Ukuran berkas maksimal 200 MB.',
+        ]);
+
+        $berkas = $request->file('berkas');
+
+        try {
+            $hasil = $this->service->validasi($berkas->getRealPath(), $berkas->getClientOriginalName());
+        } catch (ImportException $e) {
+            return response()->json(['message' => $e->getMessage()], $e->status);
+        } catch (Throwable $e) {
+            return $this->gagalTakTerduga($e, 'validasi');
+        }
+
+        return response()->json([
+            'message' => sprintf(
+                'Validasi selesai: %s baris valid dan %s baris tidak valid.',
+                number_format($hasil['laporan']['valid'], 0, ',', '.'),
+                number_format($hasil['laporan']['tidak_valid'], 0, ',', '.'),
+            ),
+            'hasil' => $hasil,
+        ]);
+    }
+
     public function upload(Request $request): JsonResponse
     {
         $request->validate([
-            'berkas' => ['required', 'file', 'mimes:'.implode(',', Spreadsheet::EKSTENSI), 'max:20480'],
+            // Maksimal 200 MB. Nilai Laravel menggunakan satuan kilobyte.
+            'berkas' => ['required', 'file', 'mimes:'.implode(',', Spreadsheet::EKSTENSI), 'max:204800'],
+        ], [
+            'berkas.max' => 'Ukuran berkas maksimal 200 MB.',
         ]);
 
         $berkas = $request->file('berkas');
@@ -43,6 +75,8 @@ class UploadPinjamanController extends Controller
             $hasil = $this->service->impor($berkas->getRealPath(), $berkas->getClientOriginalName());
         } catch (ImportException $e) {
             return response()->json(['message' => $e->getMessage()], $e->status);
+        } catch (Throwable $e) {
+            return $this->gagalTakTerduga($e, 'upload');
         }
 
         $pesan = sprintf(
@@ -60,6 +94,21 @@ class UploadPinjamanController extends Controller
         }
 
         return response()->json(['message' => $pesan, 'hasil' => $hasil]);
+    }
+
+    private function gagalTakTerduga(Throwable $e, string $tahap): JsonResponse
+    {
+        report($e);
+
+        $detail = trim($e->getMessage());
+        if ($detail === '') {
+            $detail = class_basename($e);
+        }
+
+        return response()->json([
+            'message' => "Gagal {$tahap} data Pinjaman: {$detail}",
+            'jenis_error' => class_basename($e),
+        ], 500);
     }
 
     public function unduh(string $tanggal): StreamedResponse

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\ImportException;
+use App\Services\Concerns\MelaporkanImport;
 use App\Models\Pinjaman;
 use App\Models\Uker;
 use App\Support\PetaKolom;
@@ -16,8 +17,9 @@ use Throwable;
 /**
  * Import data AKTUAL Pinjaman dari CSV/Excel.
  *
- * Format (long), nilai RUPIAH PENUH:
- *   id_cabang | id_uker | segmen | segmentasi | kualitas | tanggal | baki_debet
+ * Format sumber, nilai RUPIAH PENUH:
+ *   id_cabang | id_uker | SEGMEN_2025 | Segmentasi | Kualitas Kredit |
+ *   Baki Debet | Month, Day, Year of Posisi
  *
  * BEDA PENTING dari importer Simpanan: proteksi duplikat dihitung per
  * (tanggal, SEGMEN), bukan per tanggal saja. Segmen baru — mis. Menengah yang
@@ -27,21 +29,75 @@ use Throwable;
  */
 class PinjamanCsvImportService
 {
+    use MelaporkanImport;
+
     /**
      * @var array<string, list<string>>
      */
     public const ALIAS = [
         'id_cabang' => ['cabang_id', 'kode_cabang', 'cabang'],
         'id_uker' => ['uker_id', 'kode_uker', 'uker'],
-        'segmen' => ['segment'],
-        'segmentasi' => [],
-        'kualitas' => ['kolektibilitas', 'kol'],
-        'tanggal' => ['tgl', 'date', 'periode', 'posisi', 'tanggal_posisi'],
-        'baki_debet' => ['bakidebet', 'baki', 'os', 'outstanding', 'nilai', 'nominal'],
+        'segmen' => ['segment', 'SEGMEN_2025', 'segmen2025'],
+        'segmentasi' => ['Segmentasi'],
+        'kualitas' => ['kolektibilitas', 'kol', 'Kualitas Kredit', 'kualitas_kredit'],
+        'tanggal' => [
+            'tgl',
+            'date',
+            'periode',
+            'posisi',
+            'tanggal_posisi',
+            'Month, Day, Year of Posisi',
+        ],
+        'baki_debet' => ['bakidebet', 'Baki Debet', 'baki', 'os', 'outstanding', 'nilai', 'nominal'],
+    ];
+
+    /**
+     * Header yang ditampilkan pada halaman upload dan dipakai saat ekspor ulang.
+     * Urutan mengikuti format sumber terbaru.
+     *
+     * @var list<string>
+     */
+    public const KOLOM = [
+        'id_cabang',
+        'id_uker',
+        'SEGMEN_2025',
+        'Segmentasi',
+        'Kualitas Kredit',
+        'Baki Debet',
+        'Month, Day, Year of Posisi',
     ];
 
     /** @var list<string> */
-    public const KOLOM = ['id_cabang', 'id_uker', 'segmen', 'segmentasi', 'kualitas', 'tanggal', 'baki_debet'];
+    private const KOLOM_WAJIB = [
+        'id_cabang',
+        'id_uker',
+        'segmen',
+        'segmentasi',
+        'kualitas',
+        'baki_debet',
+        'tanggal',
+    ];
+
+    /**
+     * Validasi berkas tanpa menyimpan ke database.
+     *
+     * Baris yang salah dicatat satu per satu agar dapat diunduh sebagai CSV
+     * error. Baris valid baru disimpan setelah user menekan tombol Upload Data.
+     *
+     * @return array{tanggal: list<string>, baris: int, segmen: list<string>, total: float, laporan: array<string,mixed>}
+     */
+    public function validasi(string $path, ?string $namaAsli = null): array
+    {
+        $baris = $this->baca($path, $namaAsli ?? basename($path));
+
+        return [
+            'tanggal' => $baris->pluck('tanggal')->unique()->sort()->values()->all(),
+            'baris' => $baris->count(),
+            'segmen' => $baris->pluck('segmen')->unique()->sort()->values()->all(),
+            'total' => (float) $baris->sum(fn (array $b) => $b['baki_debet']),
+            'laporan' => $this->laporanImport(),
+        ];
+    }
 
     /**
      * @return array{tanggal: list<string>, baris: int, dilewati: int, segmen: list<string>, total: float}
@@ -50,23 +106,16 @@ class PinjamanCsvImportService
     {
         $baris = $this->baca($path, $namaAsli ?? basename($path));
 
-        $adaSebelumnya = $this->pasanganTanggalSegmenTersimpan($baris);
-
-        [$masuk, $dilewati] = $baris->partition(
-            fn (array $b) => ! $adaSebelumnya->contains($this->kunci($b['tanggal'], $b['segmen'])),
-        );
-
-        if ($masuk->isEmpty()) {
-            throw ImportException::bentrok(
-                'Semua kombinasi tanggal + segmen di berkas ini sudah ada: '.
-                $adaSebelumnya->take(5)->implode('; ').
-                '. Hapus dulu tanggal tersebut bila ingin menggantinya.',
-            );
-        }
+        $masuk = $baris;
+        $dilewati = collect();
 
         DB::transaction(function () use ($masuk) {
             $masuk->chunk(1000)->each(
-                fn (Collection $potongan) => Pinjaman::query()->insert($potongan->values()->all()),
+                fn (Collection $potongan) => Pinjaman::query()->upsert(
+                    $potongan->values()->all(),
+                    ['uker_id', 'segmen', 'segmentasi', 'kualitas', 'tanggal'],
+                    ['cabang_id', 'baki_debet', 'updated_at'],
+                ),
             );
         });
 
@@ -76,13 +125,14 @@ class PinjamanCsvImportService
             'dilewati' => $dilewati->count(),
             'segmen' => $masuk->pluck('segmen')->unique()->sort()->values()->all(),
             'total' => (float) $masuk->sum(fn (array $b) => $b['baki_debet']),
+            'laporan' => $this->laporanImport(),
         ];
     }
 
     /**
      * @return list<array<string, mixed>>
      */
-    public function riwayat(int $batas = 60): array
+    public function riwayat(int $batas = 1000): array
     {
         return Pinjaman::query()
             ->groupBy('tanggal')
@@ -114,11 +164,11 @@ class PinjamanCsvImportService
             ->map(fn (Pinjaman $p) => [
                 'id_cabang' => $p->cabang_id,
                 'id_uker' => $p->uker_id,
-                'segmen' => $p->segmen,
-                'segmentasi' => $p->segmentasi,
-                'kualitas' => $p->kualitas,
-                'tanggal' => $p->tanggal,
-                'baki_debet' => $p->baki_debet,
+                'SEGMEN_2025' => $p->segmen,
+                'Segmentasi' => $p->segmentasi,
+                'Kualitas Kredit' => $p->kualitas,
+                'Baki Debet' => $p->baki_debet,
+                'Month, Day, Year of Posisi' => $p->tanggal,
             ])
             ->all();
     }
@@ -166,20 +216,52 @@ class PinjamanCsvImportService
     private function baca(string $path, string $namaBerkas): Collection
     {
         $mentah = Spreadsheet::baca($path, namaAsli: $namaBerkas);
-        $baris = PetaKolom::petakan($mentah, self::ALIAS, self::KOLOM, $namaBerkas);
+        $baris = PetaKolom::petakan($mentah, self::ALIAS, self::KOLOM_WAJIB, $namaBerkas);
 
         $ukerValid = Uker::query()->pluck('cabang_id', 'id');
         $now = Carbon::now();
 
-        return $baris->map(function (array $r, int $i) use ($ukerValid, $now) {
+        return $this->petakanBarisAman($baris, function (array $r, int $i) use ($ukerValid, $now) {
             $nomor = $i + 2;
 
-            $ukerId = (int) trim((string) $r['id_uker']);
-            $kualitas = trim((string) $r['kualitas']);
-            $segmen = trim((string) $r['segmen']);
+            $idCabangSumber = trim((string) ($r['id_cabang'] ?? ''));
+            $idUkerSumber = trim((string) ($r['id_uker'] ?? ''));
+            $segmen = trim((string) ($r['segmen'] ?? ''));
+            $segmentasi = trim((string) ($r['segmentasi'] ?? ''));
+            $kualitas = trim((string) ($r['kualitas'] ?? ''));
+
+            if ($idCabangSumber === '') {
+                return null;
+            }
+
+            if (! ctype_digit($idCabangSumber)) {
+                return null;
+            }
+
+            if ($idUkerSumber === '') {
+                return null;
+            }
+
+            if (! ctype_digit($idUkerSumber)) {
+                return null;
+            }
+
+            $ukerId = (int) $idUkerSumber;
 
             if (! $ukerValid->has($ukerId)) {
-                throw ImportException::berkas("Baris {$nomor}: id_uker {$ukerId} tidak ada di master uker.");
+                return null;
+            }
+
+            if ($segmen === '') {
+                return null;
+            }
+
+            if ($segmentasi === '') {
+                return null;
+            }
+
+            if ($kualitas === '') {
+                return null;
             }
 
             if (! in_array($kualitas, Pinjaman::KUALITAS, true)) {
@@ -188,23 +270,19 @@ class PinjamanCsvImportService
                 );
             }
 
-            if ($segmen === '') {
-                throw ImportException::berkas("Baris {$nomor}: kolom segmen kosong.");
-            }
-
             return [
                 // Master adalah sumber kebenaran hubungan uker->cabang.
                 'cabang_id' => $ukerValid[$ukerId],
                 'uker_id' => $ukerId,
                 'segmen' => $segmen,
-                'segmentasi' => trim((string) $r['segmentasi']),
+                'segmentasi' => $segmentasi,
                 'kualitas' => $kualitas,
                 'tanggal' => $this->tanggal($r['tanggal'], $nomor),
                 'baki_debet' => $this->angka($r['baki_debet'], $nomor),
                 'created_at' => $now,
                 'updated_at' => $now,
             ];
-        })->values();
+        });
     }
 
     private function tanggal(mixed $nilai, int $nomor): string
@@ -215,10 +293,22 @@ class PinjamanCsvImportService
             throw ImportException::berkas("Baris {$nomor}: kolom tanggal kosong.");
         }
 
+        foreach (['m/d/Y', 'n/j/Y', 'Y-m-d', 'd/m/Y'] as $format) {
+            try {
+                $tanggal = Carbon::createFromFormat($format, $mentah);
+
+                if ($tanggal !== false && $tanggal->format($format) === $mentah) {
+                    return $tanggal->toDateString();
+                }
+            } catch (Throwable) {
+                // Coba format berikutnya.
+            }
+        }
+
         try {
             return Carbon::parse($mentah)->toDateString();
         } catch (Throwable) {
-            throw ImportException::berkas("Baris {$nomor}: tanggal '{$mentah}' tidak bisa dibaca.");
+            throw ImportException::berkas("Baris {$nomor}: tanggal '{$mentah}' tidak bisa dibaca. Gunakan format MM/DD/YYYY, contoh 01/31/2026.");
         }
     }
 

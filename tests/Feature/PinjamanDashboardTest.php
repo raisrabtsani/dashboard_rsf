@@ -21,13 +21,14 @@ class PinjamanDashboardTest extends TestCase
 {
     use RefreshDatabase;
 
-    private const CABANG_A = 159;
+    // Master Jakarta 2: cabang 12 = KC Bogor (uker 804), cabang 319 = KC Cikarang (uker 842).
+    private const CABANG_A = 12;
 
-    private const UKER_A = 5438;
+    private const UKER_A = 804;
 
-    private const CABANG_B = 621;
+    private const CABANG_B = 319;
 
-    private const UKER_B = 5516;
+    private const UKER_B = 842;
 
     private const POSISI = '2026-06-18';
 
@@ -67,20 +68,20 @@ class PinjamanDashboardTest extends TestCase
         ];
 
         foreach ($tanggal as $tgl => [$lancar, $sml, $npl]) {
-            $this->baris(self::CABANG_A, self::UKER_A, 'Mikro', Pinjaman::KUALITAS_LANCAR, $tgl, $lancar);
-            $this->baris(self::CABANG_A, self::UKER_A, 'Mikro', Pinjaman::KUALITAS_SML, $tgl, $sml);
-            $this->baris(self::CABANG_A, self::UKER_A, 'Mikro', Pinjaman::KUALITAS_NPL, $tgl, $npl);
+            $this->baris(self::CABANG_A, self::UKER_A, 'Micro', Pinjaman::KUALITAS_LANCAR, $tgl, $lancar);
+            $this->baris(self::CABANG_A, self::UKER_A, 'Micro', Pinjaman::KUALITAS_SML, $tgl, $sml);
+            $this->baris(self::CABANG_A, self::UKER_A, 'Micro', Pinjaman::KUALITAS_NPL, $tgl, $npl);
         }
 
         // Cabang lain, hanya tanggal posisi — untuk uji scoping.
-        $this->baris(self::CABANG_B, self::UKER_B, 'Kecil', Pinjaman::KUALITAS_LANCAR, self::POSISI, 1_000);
+        $this->baris(self::CABANG_B, self::UKER_B, 'Small', Pinjaman::KUALITAS_LANCAR, self::POSISI, 1_000);
 
         // RKA Juni 2026 cabang A segmen Mikro.
         foreach ([[Pinjaman::KUALITAS_LANCAR, 1_000], [Pinjaman::KUALITAS_SML, 100], [Pinjaman::KUALITAS_NPL, 100]] as [$k, $t]) {
             RkaPinjaman::factory()->create([
                 'cabang_id' => self::CABANG_A,
                 'uker_id' => self::UKER_A,
-                'segmen' => 'Mikro',
+                'segmen' => 'Micro',
                 'segmentasi' => 'Ritel',
                 'kualitas' => $k,
                 'tahun' => 2026,
@@ -153,7 +154,7 @@ class PinjamanDashboardTest extends TestCase
     {
         $snapshot = $this->snapshot($this->admin(), 'total', ['cabang_id' => self::CABANG_A]);
 
-        $this->assertSame(1_000.0, $this->kartu($snapshot, 'Mikro')['nilai']);
+        $this->assertSame(1_000.0, $this->kartu($snapshot, 'Micro')['nilai']);
     }
 
     public function test_tab_tak_dikenal_jatuh_ke_total(): void
@@ -220,8 +221,8 @@ class PinjamanDashboardTest extends TestCase
     public function test_mom_memakai_sub_month_no_overflow(): void
     {
         // 31 Mar -> 28 Feb (bukan lompat ke Maret lagi).
-        $this->baris(self::CABANG_A, self::UKER_A, 'Mikro', Pinjaman::KUALITAS_NPL, '2026-03-31', 50);
-        $this->baris(self::CABANG_A, self::UKER_A, 'Mikro', Pinjaman::KUALITAS_NPL, '2026-02-28', 40);
+        $this->baris(self::CABANG_A, self::UKER_A, 'Micro', Pinjaman::KUALITAS_NPL, '2026-03-31', 50);
+        $this->baris(self::CABANG_A, self::UKER_A, 'Micro', Pinjaman::KUALITAS_NPL, '2026-02-28', 40);
 
         $snapshot = $this->actingAs($this->admin())
             ->getJson('/api/pinjaman/snapshot?'.http_build_query([
@@ -269,24 +270,68 @@ class PinjamanDashboardTest extends TestCase
 
     // --- Endpoint khusus ---------------------------------------------------
 
-    public function test_endpoint_produk_merinci_kualitas_per_segmen(): void
+    public function test_endpoint_produk_merinci_per_produk_dengan_target_dan_gap(): void
     {
+        // Produk kedua di segmen Mikro (hanya tanggal posisi) untuk menguji
+        // pengelompokan per produk (segmentasi) dan pengurutan nilai.
+        Pinjaman::factory()->create([
+            'cabang_id' => self::CABANG_A,
+            'uker_id' => self::UKER_A,
+            'segmen' => 'Micro',
+            'segmentasi' => 'Kupedes',
+            'kualitas' => Pinjaman::KUALITAS_LANCAR,
+            'tanggal' => self::POSISI,
+            'baki_debet' => 200 * 1_000_000,
+        ]);
+
         $data = $this->actingAs($this->admin())
             ->getJson('/api/pinjaman/produk?'.http_build_query([
                 'tanggal' => self::POSISI,
+                'tab' => 'total',
                 'cabang_id' => self::CABANG_A,
             ]))
             ->assertOk()
             ->json();
 
-        $mikro = collect($data['baris'])->firstWhere('segmen', 'Mikro');
+        $mikro = collect($data['kelompok'])->firstWhere('segmen', 'Micro');
 
-        $this->assertSame(800.0, (float) $mikro['lancar']);
-        $this->assertSame(120.0, (float) $mikro['sml']);
-        $this->assertSame(80.0, (float) $mikro['npl']);
-        $this->assertSame(1_000.0, (float) $mikro['os']);
-        $this->assertSame(8.0, (float) $mikro['pct_npl']);   // 80/1000
-        $this->assertSame(12.0, (float) $mikro['pct_sml']);  // 120/1000
+        // Total segmen = Ritel (OS 1000) + Kupedes (200).
+        $this->assertSame(1_200.0, (float) $mikro['total']['nilai']);
+        // Terurut nilai desc: Ritel dulu, lalu Kupedes.
+        $this->assertSame(['Ritel', 'Kupedes'], collect($mikro['produk'])->pluck('segmentasi')->all());
+
+        $produk = collect($mikro['produk'])->keyBy('segmentasi');
+
+        // Ritel: OS 1000 vs target RKA 1200 (Lancar1000+SML100+NPL100).
+        $this->assertSame(1_000.0, (float) $produk['Ritel']['nilai']);
+        $this->assertSame(1_200.0, (float) $produk['Ritel']['target']);
+        $this->assertSame(-200.0, (float) $produk['Ritel']['gap']);
+        $this->assertSame(25.0, (float) $produk['Ritel']['delta']['dtd']['nilai']);   // vs 975 (17 Jun)
+        $this->assertSame(400.0, (float) $produk['Ritel']['delta']['yoy']['nilai']);  // vs 600 (18 Jun 2025)
+
+        // Kupedes tanpa RKA -> pencapaian null (bukan 0), gap = nilainya sendiri.
+        $this->assertSame(200.0, (float) $produk['Kupedes']['nilai']);
+        $this->assertNull($produk['Kupedes']['pencapaian']);
+    }
+
+    public function test_endpoint_produk_menghormati_tab_kualitas(): void
+    {
+        $data = $this->actingAs($this->admin())
+            ->getJson('/api/pinjaman/produk?'.http_build_query([
+                'tanggal' => self::POSISI,
+                'tab' => 'npl',
+                'cabang_id' => self::CABANG_A,
+            ]))
+            ->assertOk()
+            ->json();
+
+        $this->assertSame('npl', $data['tab']);
+        $this->assertTrue($data['inverse']);
+
+        // Tab NPL: total segmen Mikro = NPL Ritel saja = 80.
+        $mikro = collect($data['kelompok'])->firstWhere('segmen', 'Micro');
+        $this->assertSame(80.0, (float) $mikro['total']['nilai']);
+        $this->assertSame(80.0, (float) collect($mikro['produk'])->firstWhere('segmentasi', 'Ritel')['nilai']);
     }
 
     public function test_endpoint_chart_segmen_memecah_deret_per_segmen(): void
@@ -301,8 +346,8 @@ class PinjamanDashboardTest extends TestCase
 
         $segmen = collect($data['seri'])->pluck('segmen')->all();
 
-        $this->assertContains('Mikro', $segmen);
-        $this->assertContains('Kecil', $segmen);
+        $this->assertContains('Micro', $segmen);
+        $this->assertContains('Small', $segmen);
     }
 
     // --- Rollup 855 --------------------------------------------------------
@@ -311,7 +356,7 @@ class PinjamanDashboardTest extends TestCase
     {
         $sebelum = $this->kartu($this->snapshot($this->admin(), 'total'), 'total')['nilai'];
 
-        $this->baris(Region::OFFICE_ID, Region::OFFICE_ID, 'Menengah', Pinjaman::KUALITAS_LANCAR, self::POSISI, 5_000);
+        $this->baris(Region::OFFICE_ID, Region::OFFICE_ID, 'Medium', Pinjaman::KUALITAS_LANCAR, self::POSISI, 5_000);
 
         $sesudah = $this->kartu($this->snapshot($this->admin(), 'total'), 'total')['nilai'];
 
@@ -321,7 +366,7 @@ class PinjamanDashboardTest extends TestCase
 
     public function test_rollup_855_tetap_disembunyikan_dari_baris_tabel_cabang(): void
     {
-        $this->baris(Region::OFFICE_ID, Region::OFFICE_ID, 'Menengah', Pinjaman::KUALITAS_LANCAR, self::POSISI, 5_000);
+        $this->baris(Region::OFFICE_ID, Region::OFFICE_ID, 'Medium', Pinjaman::KUALITAS_LANCAR, self::POSISI, 5_000);
 
         $data = $this->actingAs($this->admin())
             ->getJson('/api/pinjaman/branch-pencapaian?tanggal='.self::POSISI.'&tab=total')

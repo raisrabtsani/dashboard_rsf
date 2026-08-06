@@ -1,6 +1,7 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import LoadingOverlay from '@/Components/LoadingOverlay.vue';
+import ImportReportCard from '@/Components/Admin/ImportReportCard.vue';
 import SortArrow from '@/Components/SortArrow.vue';
 import { Head } from '@inertiajs/vue3';
 import axios from 'axios';
@@ -23,6 +24,8 @@ const riwayat = ref([]);
 const memuat = ref(false);
 const mengunggah = ref(false);
 const pesan = ref(null);
+const laporan = ref(null);
+const namaBerkasLaporan = ref('hasil-import');
 
 const sort = useTableSort('periode', 'desc');
 const riwayatTerurut = computed(() => sort.urutkan(riwayat.value));
@@ -57,7 +60,10 @@ async function kirim() {
     data.append('jam', jam.value);
 
     try {
-        lapor((await axios.post(route('admin.upload.simpanan-hourly.store'), data)).data.message);
+        namaBerkasLaporan.value = berkas.value?.name ?? 'hasil-import';
+        const respons = (await axios.post(route('admin.upload.simpanan-hourly.store'), data)).data;
+        laporan.value = respons?.hasil?.laporan ?? null;
+        lapor(respons.message);
         berkas.value = null;
         document.getElementById('berkas').value = '';
         await muat();
@@ -158,6 +164,8 @@ onMounted(muat);
                         </button>
                     </div>
                 </div>
+
+                <ImportReportCard :laporan="laporan" :nama-berkas="namaBerkasLaporan" />
 
                 <div class="relative rounded-lg bg-white shadow ring-1 ring-gray-100">
                     <LoadingOverlay :show="memuat" />

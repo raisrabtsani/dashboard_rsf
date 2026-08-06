@@ -132,6 +132,7 @@ Route::middleware(['auth', 'scope'])->group(function () {
             Route::get('filter-options', [PhNetDgDashboardController::class, 'filterOptions'])->name('filter-options');
             Route::get('snapshot', [PhNetDgDashboardController::class, 'snapshot'])->name('snapshot');
             Route::get('chart', [PhNetDgDashboardController::class, 'chart'])->name('chart');
+            Route::get('branch-pencapaian', [PhNetDgDashboardController::class, 'branchPencapaian'])->name('branch-pencapaian');
             Route::get('cabang/{areaId}', [PhNetDgDashboardController::class, 'cabang'])->name('cabang');
             Route::get('uker/{cabangId}', [PhNetDgDashboardController::class, 'uker'])->name('uker');
         });
@@ -196,6 +197,31 @@ Route::middleware('auth')->group(function () {
 Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(function () {
     Route::get('/', [AdminController::class, 'index'])->name('index');
 
+    // Master kantor cabang & unit kerja: upload, edit, dan hapus aman.
+    Route::prefix('cabang')->name('cabang.')->group(function () {
+        Route::get('/', [AdminController::class, 'kantorCabang'])->name('index');
+        Route::get('template', [AdminController::class, 'templateKantor'])->name('template');
+        Route::post('upload', [AdminController::class, 'uploadKantor'])->name('upload');
+        Route::delete('selected', [AdminController::class, 'destroyKantorPilihan'])->name('selected');
+        Route::put('{cabang}', [AdminController::class, 'updateCabang'])->name('update');
+        Route::delete('{cabang}', [AdminController::class, 'destroyCabang'])->name('destroy');
+    });
+
+    Route::prefix('uker')->name('uker.')->group(function () {
+        Route::put('{uker}', [AdminController::class, 'updateUker'])->name('update');
+        Route::delete('{uker}', [AdminController::class, 'destroyUker'])->name('destroy');
+    });
+
+    // Ringkasan dan penghapusan pilihan RKA lintas domain.
+    Route::prefix('rka-manage/{domain}')->name('rka-manage.')->group(function () {
+        Route::get('data', [AdminController::class, 'rkaData'])
+            ->where('domain', 'simpanan|pinjaman|recovery|laba|edc|qris|simpanan-wholesale|pinjaman-commercial')
+            ->name('data');
+        Route::delete('selected', [AdminController::class, 'hapusRkaPilihan'])
+            ->where('domain', 'simpanan|pinjaman|recovery|laba|edc|qris|simpanan-wholesale|pinjaman-commercial')
+            ->name('selected');
+    });
+
     // Upload data aktual Simpanan.
     Route::prefix('upload/simpanan')->name('upload.simpanan.')->group(function () {
         Route::get('/', [UploadSimpananController::class, 'index'])->name('index');
@@ -210,6 +236,7 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
     Route::prefix('upload/pinjaman')->name('upload.pinjaman.')->group(function () {
         Route::get('/', [UploadPinjamanController::class, 'index'])->name('index');
         Route::get('riwayat', [UploadPinjamanController::class, 'riwayat'])->name('riwayat');
+        Route::post('preview', [UploadPinjamanController::class, 'preview'])->name('preview');
         Route::post('/', [UploadPinjamanController::class, 'upload'])->name('store');
         Route::get('unduh/{tanggal}', [UploadPinjamanController::class, 'unduh'])->name('unduh');
         Route::delete('bulk-month', [UploadPinjamanController::class, 'hapusBulan'])->name('bulk-month');

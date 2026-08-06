@@ -219,45 +219,73 @@ class PinjamanService
     }
 
     /**
-     * ENDPOINT KHUSUS PINJAMAN: rincian per segmen dengan pecahan kualitas.
+     * ENDPOINT KHUSUS PINJAMAN: rincian per PRODUK (kolom `segmentasi`),
+     * dikelompokkan per segmen, untuk tab aktif.
      *
-     * Selalu menampilkan ketiga kualitas + OS + %NPL, apa pun tab aktifnya —
-     * gunanya justru untuk melihat komposisinya sekaligus.
+     * Tiap kelompok = satu baris total segmen + satu baris tiap produk, masing-
+     * masing lengkap dengan target/pencapaian/gap/delta dalam satuan JUTA —
+     * bentuknya sama seperti kartu snapshot supaya frontend memakainya seragam.
+     * Frontend mengambil tab total/sml/npl sekaligus lalu menurunkan rasio
+     * %SML/%NPL di sisi klien (pola sama dengan tabel Kinerja Cabang).
      *
      * @return array<string, mixed>
      */
-    public function produk(string $tanggal, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+    public function produk(string $tanggal, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId): array
     {
+        $tab = $this->tab($tab);
         $posisi = Carbon::parse($tanggal)->startOfDay();
 
-        $baris = $this->dasarSemua($areaId, $cabangId, $ukerId)
-            ->where('tanggal', $posisi->toDateString())
-            ->groupBy('segmen', 'kualitas')
-            ->selectRaw('segmen, kualitas, SUM(baki_debet) as total')
-            ->get()
-            ->groupBy('segmen');
+        $referensi = $this->tanggalReferensi($posisi, $tab, $areaId, $cabangId, $ukerId);
+        $dibaca = collect($referensi)->push($posisi->toDateString())->filter()->unique()->values();
 
-        $hasil = $baris->map(function (Collection $rows, string $segmen) {
-            $per = $rows->pluck('total', 'kualitas')->map(fn ($v) => (float) $v);
+        $nilai = $this->nilaiPerTanggalProduk($dibaca->all(), $tab, $areaId, $cabangId, $ukerId);
+        $target = $this->targetPerProduk($posisi->year, $posisi->month, $tab, $areaId, $cabangId, $ukerId);
 
-            $lancar = (float) ($per[Pinjaman::KUALITAS_LANCAR] ?? 0);
-            $sml = (float) ($per[Pinjaman::KUALITAS_SML] ?? 0);
-            $npl = (float) ($per[Pinjaman::KUALITAS_NPL] ?? 0);
-            $os = $lancar + $sml + $npl;
+        $posisiNilai = $nilai[$posisi->toDateString()] ?? [];
+        $peta = $this->petaSegmenProduk($posisiNilai, $target);
 
-            return [
+        $kelompok = [];
+
+        foreach ($peta as $segmen => $daftarProduk) {
+            $totalPembanding = [];
+            foreach ($referensi as $jenis => $tgl) {
+                $totalPembanding[$jenis] = $tgl === null ? null : array_sum($nilai[$tgl][$segmen] ?? []);
+            }
+
+            $produk = [];
+            foreach ($daftarProduk as $segmentasi) {
+                $aktual = (float) ($posisiNilai[$segmen][$segmentasi] ?? 0);
+                $rka = (float) ($target[$segmen][$segmentasi] ?? 0);
+
+                $pembanding = [];
+                foreach ($referensi as $jenis => $tgl) {
+                    $pembanding[$jenis] = $tgl === null ? null : (float) ($nilai[$tgl][$segmen][$segmentasi] ?? 0);
+                }
+
+                $produk[] = ['segmentasi' => $segmentasi] + $this->barisPencapaian($aktual, $rka, $pembanding);
+            }
+
+            // Produk terurut nilai desc; produk tanpa nama ("") ke akhir.
+            usort($produk, fn ($a, $b) => ($b['nilai'] ?? 0) <=> ($a['nilai'] ?? 0));
+
+            $kelompok[] = [
                 'segmen' => $segmen,
-                'lancar' => Satuan::toJuta($lancar),
-                'sml' => Satuan::toJuta($sml),
-                'npl' => Satuan::toJuta($npl),
-                'os' => Satuan::toJuta($os),
-                // Rasio, bukan nilai uang — jangan dikonversi ke juta.
-                'pct_npl' => $os > 0 ? round($npl / $os * 100, 2) : null,
-                'pct_sml' => $os > 0 ? round($sml / $os * 100, 2) : null,
+                'total' => $this->barisPencapaian(
+                    array_sum($posisiNilai[$segmen] ?? []),
+                    array_sum($target[$segmen] ?? []),
+                    $totalPembanding,
+                ),
+                'produk' => $produk,
             ];
-        })->values()->sortByDesc('os')->values()->all();
+        }
 
-        return ['tanggal' => $posisi->toDateString(), 'baris' => $hasil];
+        return [
+            'tanggal' => $posisi->toDateString(),
+            'tab' => $tab,
+            'inverse' => in_array($tab, self::TAB_INVERSE, true),
+            'label_delta' => $this->labelDelta($tab),
+            'kelompok' => $kelompok,
+        ];
     }
 
     /**
@@ -493,19 +521,122 @@ class PinjamanService
     }
 
     /**
-     * Segmen yang muncul di data ATAU di target, supaya segmen bertarget tapi
-     * belum ada realisasinya tetap tampil (pencapaian 0%, bukan hilang).
+     * Rakit satu baris pencapaian (nilai/target/penc/gap/delta) dalam satuan JUTA.
+     * Dipakai baris total segmen maupun baris produk di endpoint {@see produk()}.
+     *
+     * @param  array<string, float|null>  $pembanding  nilai pembanding per jenis delta; null = tanggal referensi tak tersedia
+     * @return array<string, mixed>
+     */
+    private function barisPencapaian(float $aktual, float $rka, array $pembanding): array
+    {
+        $delta = [];
+
+        foreach ($pembanding as $jenis => $nilai) {
+            $delta[$jenis] = Delta::hitung($aktual, $nilai);
+        }
+
+        return [
+            'nilai' => Satuan::toJuta($aktual),
+            'target' => Satuan::toJuta($rka),
+            'pencapaian' => $rka > 0 ? round($aktual / $rka * 100, 2) : null,
+            'gap' => Satuan::toJuta($aktual - $rka),
+            'delta' => $delta,
+        ];
+    }
+
+    /**
+     * Nilai tab aktif per (segmen, segmentasi) untuk beberapa tanggal sekaligus.
+     *
+     * @param  list<string>  $tanggal
+     * @return array<string, array<string, array<string, float>>> [tanggal => [segmen => [segmentasi => nilai]]]
+     */
+    private function nilaiPerTanggalProduk(array $tanggal, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+    {
+        if ($tanggal === []) {
+            return [];
+        }
+
+        return $this->dasar($tab, $areaId, $cabangId, $ukerId)
+            ->whereIn('tanggal', $tanggal)
+            ->groupBy('tanggal', 'segmen', 'segmentasi')
+            ->selectRaw('tanggal, segmen, segmentasi, SUM(baki_debet) as total')
+            ->get()
+            ->groupBy(fn ($row) => Carbon::parse($row->tanggal)->toDateString())
+            ->map(fn (Collection $rows) => $rows
+                ->groupBy('segmen')
+                ->map(fn (Collection $g) => $g->pluck('total', 'segmentasi')->map(fn ($v) => (float) $v)->all())
+                ->all())
+            ->all();
+    }
+
+    /**
+     * Target RKA tab aktif per (segmen, segmentasi).
+     *
+     * @return array<string, array<string, float>> [segmen => [segmentasi => target]]
+     */
+    private function targetPerProduk(int $tahun, int $bulan, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+    {
+        return $this->filterOrganisasi(
+            RkaPinjaman::query()->whereIn('kualitas', $this->kualitasTab($tab)),
+            $areaId,
+            $cabangId,
+            $ukerId,
+        )
+            ->where('tahun', $tahun)
+            ->where('bulan', $bulan)
+            ->groupBy('segmen', 'segmentasi')
+            ->selectRaw('segmen, segmentasi, SUM(target) as total')
+            ->get()
+            ->groupBy('segmen')
+            ->map(fn (Collection $g) => $g->pluck('total', 'segmentasi')->map(fn ($v) => (float) $v)->all())
+            ->all();
+    }
+
+    /**
+     * Peta segmen => daftar produk, gabungan dari nilai posisi & target. Segmen
+     * urut mengikuti Pinjaman::SEGMEN; segmen/produk bertarget tanpa realisasi
+     * tetap ikut supaya pencapaiannya tampil (bukan hilang).
+     *
+     * @param  array<string, array<string, float>>  $posisiNilai
+     * @param  array<string, array<string, float>>  $target
+     * @return array<string, list<string>>
+     */
+    private function petaSegmenProduk(array $posisiNilai, array $target): array
+    {
+        $segmen = collect(array_keys($posisiNilai))
+            ->merge(array_keys($target))
+            ->unique()
+            ->sortBy(fn (string $s) => array_search($s, Pinjaman::SEGMEN, true) === false
+                ? PHP_INT_MAX
+                : array_search($s, Pinjaman::SEGMEN, true))
+            ->values();
+
+        $peta = [];
+
+        foreach ($segmen as $s) {
+            $peta[$s] = collect(array_keys($posisiNilai[$s] ?? []))
+                ->merge(array_keys($target[$s] ?? []))
+                ->unique()
+                ->values()
+                ->all();
+        }
+
+        return $peta;
+    }
+
+    /**
+     * Segmen yang PUNYA data aktual saja. Segmen yang hanya muncul di target
+     * (RKA) sengaja TIDAK ditampilkan: penamaan RKA yang berbeda dari aktual
+     * (mis. "Mikro" vs "Micro") kalau tidak disaring akan menghasilkan kartu
+     * hantu ber-nilai 0 yang menggandakan segmen aslinya.
      *
      * @param  array<string, array<string, float>>  $nilai
-     * @param  array<string, float>  $target
      * @return list<string>
      */
-    private function segmenTersedia(array $nilai, array $target): array
+    private function segmenTersedia(array $nilai): array
     {
-        $dariNilai = collect($nilai)->flatMap(fn (array $per) => array_keys($per));
-
-        return $dariNilai
-            ->merge(array_keys($target))
+        return collect($nilai)
+            ->flatMap(fn (array $per) => array_keys($per))
             ->unique()
             ->sortBy(fn (string $s) => array_search($s, Pinjaman::SEGMEN, true) === false
                 ? PHP_INT_MAX

@@ -58,16 +58,17 @@ class Csv
                     continue;
                 }
 
-                if (count($kolom) !== count($header)) {
-                    throw ImportException::berkas(sprintf(
-                        'Baris %d di %s punya %d kolom, harusnya %d: %s',
-                        $nomor,
-                        $nama,
-                        count($kolom),
-                        count($header),
-                        implode(',', $kolom),
-                    ));
-                }
+                // Jangan hentikan seluruh berkas hanya karena satu baris
+                // memiliki kolom kosong/kurang. Ratakan seperti pembaca Excel:
+                // kolom kurang diisi string kosong, kolom berlebih dipotong.
+                // Validasi isi tetap dilakukan per baris oleh masing-masing
+                // importer sehingga baris valid tetap dapat diproses dan baris
+                // bermasalah masuk ke laporan error yang dapat diunduh.
+                $kolom = array_pad(
+                    array_slice($kolom, 0, count($header)),
+                    count($header),
+                    '',
+                );
 
                 $baris->push(array_combine($header, $kolom));
             }
@@ -99,6 +100,7 @@ class Csv
     {
         $kolom[0] = preg_replace('/^\x{FEFF}/u', '', (string) $kolom[0]);
         $header = array_map(trim(...), $kolom);
+        $header = self::gabungkanHeaderTanggalTableau($header);
 
         $hilang = array_diff($kolomWajib, $header);
 
@@ -112,5 +114,38 @@ class Csv
         }
 
         return $header;
+    }
+
+    /**
+     * Tableau kadang menulis header tanggal sebagai:
+     * Month, Day, Year of Posisi
+     *
+     * Jika header CSV tidak diberi tanda kutip, fgetcsv membacanya sebagai tiga
+     * kolom terpisah. Gabungkan kembali supaya jumlah kolom header cocok dengan
+     * baris data dan importer tetap menerima format sumber apa adanya.
+     *
+     * @param  list<string>  $header
+     * @return list<string>
+     */
+    private static function gabungkanHeaderTanggalTableau(array $header): array
+    {
+        for ($i = 0; $i <= count($header) - 3; $i++) {
+            if (
+                strcasecmp($header[$i], 'Month') === 0
+                && strcasecmp($header[$i + 1], 'Day') === 0
+                && preg_match('/^Year\s+of\s+.+$/iu', $header[$i + 2]) === 1
+            ) {
+                array_splice(
+                    $header,
+                    $i,
+                    3,
+                    [implode(', ', [$header[$i], $header[$i + 1], $header[$i + 2]])],
+                );
+
+                break;
+            }
+        }
+
+        return array_values($header);
     }
 }

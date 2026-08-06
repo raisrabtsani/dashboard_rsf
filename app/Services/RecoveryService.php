@@ -80,10 +80,10 @@ class RecoveryService
      */
     public function snapshot(string $tanggal, ?int $areaId, ?int $cabangId, ?int $ukerId): array
     {
-        $posisi = Carbon::parse($tanggal)->startOfDay();
+        $tanggalDiminta = Carbon::parse($tanggal)->startOfDay();
+        $tanggalData = $this->tanggalTersedia($tanggalDiminta, $areaId, $cabangId, $ukerId);
+        $posisi = Carbon::parse($tanggalData ?? $tanggalDiminta->toDateString())->startOfDay();
 
-        // Tanggal pembanding di-resolve ke tanggal TERSEDIA terakhir <= target,
-        // supaya akhir pekan / hari libur tidak bikin delta kosong.
         $referensi = [
             'dtd' => $this->tanggalTersedia($posisi->copy()->subDay(), $areaId, $cabangId, $ukerId),
             'mtd' => $this->tanggalTersedia($posisi->copy()->subMonthNoOverflow()->endOfMonth(), $areaId, $cabangId, $ukerId),
@@ -100,7 +100,6 @@ class RecoveryService
 
         $kartu = [];
 
-        // Total lebih dulu, lalu satu kartu per segmen kanonik.
         foreach (['total', ...$segmen] as $key) {
             $aktual = $key === 'total' ? array_sum($posisiNilai) : (float) ($posisiNilai[$key] ?? 0);
             $rka = $key === 'total' ? array_sum($target) : (float) ($target[$key] ?? 0);
@@ -118,7 +117,7 @@ class RecoveryService
 
             $kartu[] = [
                 'key' => $key,
-                'judul' => $key === 'total' ? 'Total Recovery' : $key,
+                'judul' => $key === 'total' ? 'Total Recovery EC' : strtoupper($key),
                 'nilai' => Satuan::toJuta($aktual),
                 'delta' => $delta,
                 'target' => Satuan::toJuta($rka),
@@ -129,33 +128,43 @@ class RecoveryService
 
         return [
             'tanggal' => $posisi->toDateString(),
+            'tanggal_diminta' => $tanggalDiminta->toDateString(),
+            'tanggal_disesuaikan' => $tanggalData !== null && $tanggalData !== $tanggalDiminta->toDateString(),
             'tanggal_referensi' => $referensi,
             'kartu' => $kartu,
         ];
     }
 
     /**
-     * Tren recovery harian, dipecah jadi satu seri per bulan untuk line chart.
-     *
-     * Bulan DITURUNKAN DI PHP — query hanya group by tanggal, supaya jalan sama
-     * persis di MySQL (produksi) dan SQLite (test).
+     * Tren recovery harian untuk total / satu segmen.
      *
      * @return array<string, mixed>
      */
-    public function chart(string $tanggal, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+    public function chart(string $tanggal, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $scope = null): array
     {
-        $posisi = Carbon::parse($tanggal)->startOfDay();
+        $tanggalDiminta = Carbon::parse($tanggal)->startOfDay();
+        $tanggalData = $this->tanggalTersedia($tanggalDiminta, $areaId, $cabangId, $ukerId);
+        $posisi = Carbon::parse($tanggalData ?? $tanggalDiminta->toDateString())->startOfDay();
+        $segmenDipilih = $this->scopeToSegmen($scope);
 
-        $harian = $this->dasar($areaId, $cabangId, $ukerId)
+        $rows = $this->dasar($areaId, $cabangId, $ukerId)
             ->whereBetween('tanggal', [$posisi->copy()->startOfYear()->toDateString(), $posisi->toDateString()])
-            ->groupBy('tanggal')
+            ->groupBy('tanggal', 'segmen')
             ->orderBy('tanggal')
-            ->selectRaw('tanggal, SUM(actual) as total')
-            ->pluck('total', 'tanggal');
+            ->selectRaw('tanggal, segmen, SUM(actual) as total')
+            ->get();
 
-        $seri = collect($harian)
-            ->mapWithKeys(fn ($total, $tgl) => [Carbon::parse($tgl)->toDateString() => $total])
-            // preserveKeys wajib: key-nya tanggal, dan masih dipakai di map di bawah.
+        $harian = $rows
+            ->groupBy(fn ($row) => Carbon::parse($row->tanggal)->toDateString())
+            ->map(function (Collection $perTanggal) use ($segmenDipilih) {
+                $dilipat = $this->lipatSegmen($perTanggal);
+
+                return $segmenDipilih === null
+                    ? array_sum($dilipat)
+                    : (float) ($dilipat[$segmenDipilih] ?? 0.0);
+            });
+
+        $seri = $harian
             ->groupBy(fn ($total, string $tgl) => (int) Carbon::parse($tgl)->month, preserveKeys: true)
             ->map(fn (Collection $bulanan, int $bulan) => [
                 'bulan' => $bulan,
@@ -172,6 +181,9 @@ class RecoveryService
 
         return [
             'tahun' => $posisi->year,
+            'tanggal' => $posisi->toDateString(),
+            'tanggal_diminta' => $tanggalDiminta->toDateString(),
+            'scope' => $segmenDipilih ?? 'total',
             'seri' => $seri,
         ];
     }
@@ -183,22 +195,29 @@ class RecoveryService
     ];
 
     /**
-     * Tabel kinerja per cabang; bila cabang_id dikirim, grouping otomatis
-     * berpindah ke per-UKER di cabang itu (drill-down BO). Segmen dijumlahkan.
+     * Tabel kinerja per cabang / uker dengan delta D-1, MTD, YTD, dan YoY.
      *
      * @return array<string, mixed>
      */
     public function branchPencapaian(string $tanggal, ?int $areaId, ?int $cabangId, ?int $ukerId): array
     {
-        $posisi = Carbon::parse($tanggal)->startOfDay();
+        $tanggalDiminta = Carbon::parse($tanggal)->startOfDay();
+        $tanggalData = $this->tanggalTersedia($tanggalDiminta, $areaId, $cabangId, $ukerId);
+        $posisi = Carbon::parse($tanggalData ?? $tanggalDiminta->toDateString())->startOfDay();
         $perUker = $cabangId !== null;
         $kolom = $perUker ? 'uker_id' : 'cabang_id';
 
-        $aktual = $this->dasar($areaId, $cabangId, $ukerId)
-            ->where('tanggal', $posisi->toDateString())
-            ->groupBy($kolom)
-            ->selectRaw("{$kolom} as entitas_id, SUM(actual) as total")
-            ->pluck('total', 'entitas_id');
+        $referensi = [
+            'dtd' => $this->tanggalTersedia($posisi->copy()->subDay(), $areaId, $cabangId, $ukerId),
+            'mtd' => $this->tanggalTersedia($posisi->copy()->subMonthNoOverflow()->endOfMonth(), $areaId, $cabangId, $ukerId),
+            'ytd' => $this->tanggalTersedia($posisi->copy()->subYear()->endOfYear(), $areaId, $cabangId, $ukerId),
+            'yoy' => $this->tanggalTersedia($posisi->copy()->subYear(), $areaId, $cabangId, $ukerId),
+        ];
+
+        $aktual = $this->nilaiPerEntitasTanggal($posisi->toDateString(), $kolom, $areaId, $cabangId, $ukerId);
+        $pembanding = collect($referensi)->map(
+            fn (?string $tgl) => $this->nilaiPerEntitasTanggal($tgl, $kolom, $areaId, $cabangId, $ukerId),
+        );
 
         $target = $this->filterOrganisasi(
             RkaRecovery::query()->where('cabang_id', '!=', self::EXCLUDED_REGION_ID),
@@ -212,26 +231,36 @@ class RecoveryService
             ->selectRaw("{$kolom} as entitas_id, SUM(target) as total")
             ->pluck('total', 'entitas_id');
 
-        $nama = $perUker
-            ? Uker::query()->whereIn('id', $aktual->keys())->pluck('nama', 'id')
-            : Cabang::query()->whereIn('id', $aktual->keys())->pluck('nama', 'id');
+        $entitas = $perUker
+            ? Uker::query()->with('cabang.area')->whereIn('id', $aktual->keys())->get()->keyBy('id')
+            : Cabang::query()->with('area')->whereIn('id', $aktual->keys())->get()->keyBy('id');
 
-        $baris = $aktual->map(function ($total, $entitasId) use ($target, $nama) {
-            $rka = (float) ($target[$entitasId] ?? 0);
+        $baris = $aktual->map(function ($total, $entitasId) use ($target, $entitas, $pembanding, $perUker) {
             $nilai = (float) $total;
+            $rka = (float) ($target[$entitasId] ?? 0.0);
+            $kantor = $entitas->get($entitasId);
+            $area = $perUker ? $kantor?->cabang?->area : $kantor?->area;
 
             return [
                 'id' => (int) $entitasId,
-                'nama' => $nama[$entitasId] ?? (string) $entitasId,
+                'nama' => $kantor?->nama ?? (string) $entitasId,
+                'area_nama' => $area?->nama,
                 'nilai' => Satuan::toJuta($nilai),
                 'target' => Satuan::toJuta($rka),
                 'pencapaian' => $rka > 0 ? round($nilai / $rka * 100, 2) : null,
                 'gap' => Satuan::toJuta($nilai - $rka),
+                'dtd' => Delta::hitung($nilai, $pembanding->get('dtd')?->get($entitasId)),
+                'mtd' => Delta::hitung($nilai, $pembanding->get('mtd')?->get($entitasId)),
+                'ytd' => Delta::hitung($nilai, $pembanding->get('ytd')?->get($entitasId)),
+                'yoy' => Delta::hitung($nilai, $pembanding->get('yoy')?->get($entitasId)),
             ];
         })->values()->sortByDesc('nilai')->values()->all();
 
         return [
             'tanggal' => $posisi->toDateString(),
+            'tanggal_diminta' => $tanggalDiminta->toDateString(),
+            'tanggal_disesuaikan' => $tanggalData !== null && $tanggalData !== $tanggalDiminta->toDateString(),
+            'tanggal_referensi' => $referensi,
             'grouping' => $perUker ? 'uker' : 'cabang',
             'baris' => $baris,
         ];
@@ -263,11 +292,6 @@ class RecoveryService
     }
 
     /**
-     * Nilai per (tanggal, segmen KANONIK) untuk semua tanggal pembanding sekaligus.
-     *
-     * Query group by segmen MENTAH; pelipatan ke kanonik dilakukan di PHP supaya
-     * "Small" + "Medium" + "SME" jatuh ke satu ember "SME".
-     *
      * @param  list<string>  $tanggal
      * @return array<string, array<string, float>>
      */
@@ -285,6 +309,22 @@ class RecoveryService
             ->groupBy(fn ($row) => Carbon::parse($row->tanggal)->toDateString())
             ->map(fn (Collection $rows) => $this->lipatSegmen($rows))
             ->all();
+    }
+
+    /**
+     * @return Collection<int|string, float>
+     */
+    private function nilaiPerEntitasTanggal(?string $tanggal, string $kolom, ?int $areaId, ?int $cabangId, ?int $ukerId): Collection
+    {
+        if ($tanggal === null) {
+            return collect();
+        }
+
+        return $this->dasar($areaId, $cabangId, $ukerId)
+            ->where('tanggal', $tanggal)
+            ->groupBy($kolom)
+            ->selectRaw("{$kolom} as entitas_id, SUM(actual) as total")
+            ->pluck('total', 'entitas_id');
     }
 
     /**
@@ -318,7 +358,7 @@ class RecoveryService
         $per = [];
 
         foreach ($rows as $row) {
-            $kanonik = Recovery::kanonik((string) $row->segmen);
+            $kanonik = Recovery::kanonik((string) $row->segmen) ?? (string) $row->segmen;
             $per[$kanonik] = ($per[$kanonik] ?? 0.0) + (float) $row->total;
         }
 
@@ -326,10 +366,6 @@ class RecoveryService
     }
 
     /**
-     * Segmen yang muncul di data ATAU di target, supaya segmen bertarget tapi
-     * belum ada realisasinya tetap tampil (pencapaian 0%, bukan hilang).
-     * Diurutkan mengikuti Recovery::SEGMEN; segmen tak dikenal ditaruh di akhir.
-     *
      * @param  array<string, array<string, float>>  $nilai
      * @param  array<string, float>  $target
      * @return list<string>
@@ -346,5 +382,17 @@ class RecoveryService
                 : array_search($s, Recovery::SEGMEN, true))
             ->values()
             ->all();
+    }
+
+    private function scopeToSegmen(?string $scope): ?string
+    {
+        $scope = strtolower(trim((string) $scope));
+
+        return match ($scope) {
+            'micro' => 'Micro',
+            'sme' => 'SME',
+            'consumer' => 'Consumer',
+            default => null,
+        };
     }
 }

@@ -3,36 +3,32 @@
 namespace App\Services;
 
 use App\Models\Area;
+use App\Models\Cabang;
 use App\Models\Region;
+use App\Models\RkaSimpanan;
 use App\Models\Simpanan;
 use App\Models\SimpananHourly;
+use App\Models\Uker;
 use App\Services\Concerns\MenyaringOrganisasi;
+use App\Support\Delta;
 use App\Support\Satuan;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 
 /**
- * DPK per JAM pada tanggal akhir bulan.
+ * Dashboard DPK per jam pada tanggal EOM.
  *
- * DUA TABEL: posisi per jam dibaca dari `simpanan_hourly`, sedangkan PEMBANDING
- * delta diambil dari `simpanan` HARIAN — yaitu posisi hari sebelumnya, bukan
- * jam sebelumnya. Yang ingin dilihat pengguna adalah "sudah bergerak berapa
- * jauh dari posisi kemarin", bukan riak antar jam.
- *
- * Tidak punya RKA sendiri.
+ * Posisi intraday dibaca dari `simpanan_hourly`. Target dan pembanding harian
+ * tetap memakai tabel `rka_simpanan` serta `simpanan`, sehingga halaman hourly
+ * dapat menampilkan RKA, H-1, DTD, MTD, YTD, dan YOY tanpa tabel tambahan.
  */
 class SimpananHourlyService
 {
     use MenyaringOrganisasi;
 
-    /**
-     * Rollup Region Office dikecualikan — sama seperti SimpananService, karena
-     * datanya bersumber dari tabel simpanan yang sama.
-     */
     public const EXCLUDED_REGION_ID = Region::OFFICE_ID;
 
-    /** Kartu: 3 produk + 2 agregat turunan, identik dengan dashboard Simpanan. */
     public const KARTU = SimpananService::KARTU;
 
     /**
@@ -44,23 +40,20 @@ class SimpananHourlyService
             'area' => Area::query()->orderBy('nama')->get(['id', 'nama'])->toArray(),
             'cabang' => $this->cabangPerArea($areaId),
             'uker' => $cabangId === null ? [] : $this->ukerPerCabang($cabangId),
+            'produk' => Simpanan::PRODUK,
             'tanggal' => $this->tanggalTersedia(),
             'tanggal_maks' => $this->tanggalTerakhir(),
         ];
     }
 
-    /**
-     * Tanggal EOM yang sudah punya data per jam, terbaru dulu.
-     *
-     * @return list<string>
-     */
+    /** @return list<string> */
     public function tanggalTersedia(): array
     {
         return SimpananHourly::query()
             ->distinct()
             ->orderByDesc('tanggal')
             ->pluck('tanggal')
-            ->map(fn ($t) => Carbon::parse($t)->toDateString())
+            ->map(fn ($tanggal) => Carbon::parse($tanggal)->toDateString())
             ->values()
             ->all();
     }
@@ -73,104 +66,166 @@ class SimpananHourlyService
     }
 
     /**
-     * Jam yang sudah terisi pada satu tanggal.
-     *
      * @return list<int>
      */
-    public function jamTersedia(string $tanggal, ?int $areaId, ?int $cabangId, ?int $ukerId): array
-    {
-        return $this->dasarHourly($areaId, $cabangId, $ukerId)
+    public function jamTersedia(
+        string $tanggal,
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $produk = null,
+    ): array {
+        return $this->dasarHourly($areaId, $cabangId, $ukerId, $produk)
             ->where('tanggal', Carbon::parse($tanggal)->toDateString())
             ->distinct()
             ->orderBy('jam')
             ->pluck('jam')
-            ->map(fn ($j) => (int) $j)
+            ->map(fn ($jam) => (int) $jam)
             ->values()
             ->all();
     }
 
     /**
-     * Kartu KPI posisi per jam, dibandingkan dengan posisi HARIAN hari sebelumnya.
+     * Kartu Total DPK, Tabungan, Giro, Deposito, dan CASA.
      *
      * @return array<string, mixed>
      */
-    public function snapshot(string $tanggal, ?int $jam, ?int $areaId, ?int $cabangId, ?int $ukerId): array
-    {
+    public function snapshot(
+        string $tanggal,
+        ?int $jam,
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $produk = null,
+    ): array {
         $posisi = Carbon::parse($tanggal)->startOfDay();
-        $jamTersedia = $this->jamTersedia($posisi->toDateString(), $areaId, $cabangId, $ukerId);
-
-        // Tanpa jam eksplisit, pakai jam TERAKHIR yang sudah masuk.
+        $produk = $this->normalisasiProduk($produk);
+        $jamTersedia = $this->jamTersedia(
+            $posisi->toDateString(),
+            $areaId,
+            $cabangId,
+            $ukerId,
+            $produk,
+        );
         $jamAktif = $jam ?? (end($jamTersedia) ?: null);
+        $jamSebelum = $jamAktif === null
+            ? null
+            : collect($jamTersedia)->filter(fn (int $nilai) => $nilai < $jamAktif)->max();
 
-        $nilai = $jamAktif === null
+        $nilaiSekarang = $jamAktif === null
             ? []
-            : $this->agregat($this->saldoPerProduk($posisi->toDateString(), $jamAktif, $areaId, $cabangId, $ukerId));
+            : $this->agregat($this->saldoHourlyPerProduk(
+                $posisi->toDateString(),
+                $jamAktif,
+                $areaId,
+                $cabangId,
+                $ukerId,
+                $produk,
+            ));
+        $nilaiJamSebelum = $jamSebelum === null
+            ? []
+            : $this->agregat($this->saldoHourlyPerProduk(
+                $posisi->toDateString(),
+                $jamSebelum,
+                $areaId,
+                $cabangId,
+                $ukerId,
+                $produk,
+            ));
 
-        // PEMBANDING dari tabel harian, bukan dari jam sebelumnya.
-        $tanggalBaseline = $this->tanggalHarianSebelum($posisi, $areaId, $cabangId, $ukerId);
-        $baseline = $tanggalBaseline === null
-            ? []
-            : $this->agregat($this->saldoHarianPerProduk($tanggalBaseline, $areaId, $cabangId, $ukerId));
+        $referensi = $this->tanggalReferensi($posisi, $areaId, $cabangId, $ukerId, $produk);
+        $saldoHarian = $this->saldoHarianPerTanggalProduk(
+            collect($referensi)->filter()->unique()->values()->all(),
+            $areaId,
+            $cabangId,
+            $ukerId,
+            $produk,
+        );
+        $target = $this->agregat($this->targetPerProduk(
+            $posisi->year,
+            $posisi->month,
+            $areaId,
+            $cabangId,
+            $ukerId,
+            $produk,
+        ));
 
         $kartu = [];
 
         foreach (self::KARTU as $key => $judul) {
-            $aktual = $nilai[$key] ?? null;
-            $pembanding = $baseline[$key] ?? null;
+            $aktual = $nilaiSekarang[$key] ?? 0.0;
+            $rka = $target[$key] ?? 0.0;
+            $delta = [
+                'h1' => Delta::hitung($aktual, $jamSebelum === null ? null : ($nilaiJamSebelum[$key] ?? 0.0)),
+            ];
+
+            foreach ($referensi as $jenis => $tanggalRef) {
+                $pembanding = $tanggalRef === null
+                    ? null
+                    : ($this->agregat($saldoHarian[$tanggalRef] ?? [])[$key] ?? 0.0);
+                $delta[$jenis] = Delta::hitung($aktual, $pembanding);
+            }
 
             $kartu[] = [
                 'key' => $key,
                 'judul' => $judul,
-                'nilai' => $aktual === null ? null : Satuan::toJuta($aktual),
-                'baseline' => $pembanding === null ? null : Satuan::toJuta($pembanding),
-                'delta' => [
-                    // Satu-satunya delta domain ini: vs posisi harian sebelumnya.
-                    'dtd' => $this->selisih($aktual, $pembanding),
-                ],
+                'nilai' => Satuan::toJuta($aktual),
+                'target' => Satuan::toJuta($rka),
+                'pencapaian' => $rka > 0 ? round($aktual / $rka * 100, 2) : null,
+                'gap' => Satuan::toJuta($aktual - $rka),
+                'delta' => $delta,
             ];
         }
 
         return [
             'tanggal' => $posisi->toDateString(),
             'jam' => $jamAktif,
+            'jam_sebelum' => $jamSebelum,
             'jam_tersedia' => $jamTersedia,
-            'tanggal_baseline' => $tanggalBaseline,
-            // Tidak ada RKA di domain ini.
-            'punya_rka' => false,
+            'tanggal_referensi' => $referensi,
+            'punya_rka' => true,
             'diperbarui' => Carbon::now()->format('H:i:s'),
             'kartu' => $kartu,
         ];
     }
 
     /**
-     * Tren antar jam pada tanggal tersebut, satu seri per kartu.
+     * Tren intraday per produk.
      *
      * @return array<string, mixed>
      */
-    public function chart(string $tanggal, ?int $areaId, ?int $cabangId, ?int $ukerId): array
-    {
+    public function chart(
+        string $tanggal,
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $produk = null,
+    ): array {
         $posisi = Carbon::parse($tanggal)->toDateString();
+        $produk = $this->normalisasiProduk($produk);
 
-        $baris = $this->dasarHourly($areaId, $cabangId, $ukerId)
+        $baris = $this->dasarHourly($areaId, $cabangId, $ukerId, $produk)
             ->where('tanggal', $posisi)
             ->groupBy('jam', 'produk')
             ->orderBy('jam')
             ->selectRaw('jam, produk, SUM(saldo) as total')
             ->get()
-            ->groupBy(fn ($r) => (int) $r->jam);
+            ->groupBy(fn ($row) => (int) $row->jam);
 
         $jam = $baris->keys()->sort()->values();
-
         $seri = [];
 
         foreach (self::KARTU as $key => $judul) {
             $seri[] = [
                 'key' => $key,
                 'judul' => $judul,
-                'titik' => $jam->map(function (int $j) use ($baris, $key) {
-                    $perProduk = $baris[$j]->pluck('total', 'produk')->map(fn ($v) => (float) $v)->all();
+                'titik' => $jam->map(function (int $jamAktif) use ($baris, $key) {
+                    $perProduk = $baris[$jamAktif]
+                        ->pluck('total', 'produk')
+                        ->map(fn ($nilai) => (float) $nilai)
+                        ->all();
 
-                    return Satuan::toJuta($this->agregat($perProduk)[$key]);
+                    return Satuan::toJuta($this->agregat($perProduk)[$key] ?? 0.0);
                 })->all(),
             ];
         }
@@ -178,128 +233,286 @@ class SimpananHourlyService
         return [
             'tanggal' => $posisi,
             'jam' => $jam->all(),
-            'label' => $jam->map(fn (int $j) => sprintf('%02d:00', $j))->all(),
+            'label' => $jam->map(fn (int $nilai) => sprintf('%02d:00', $nilai))->all(),
             'seri' => $seri,
         ];
     }
 
     /**
-     * Tabel per cabang untuk jam aktif, dibandingkan posisi harian sebelumnya.
+     * Tabel kinerja per cabang atau per unit kerja.
      *
      * @return array<string, mixed>
      */
-    public function branchPencapaian(string $tanggal, ?int $jam, ?int $areaId, ?int $cabangId, ?int $ukerId): array
-    {
-        $posisi = Carbon::parse($tanggal)->toDateString();
+    public function branchPencapaian(
+        string $tanggal,
+        ?int $jam,
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $produk = null,
+    ): array {
+        $posisi = Carbon::parse($tanggal)->startOfDay();
+        $produk = $this->normalisasiProduk($produk);
         $perUker = $cabangId !== null;
         $kolom = $perUker ? 'uker_id' : 'cabang_id';
-
-        $jamTersedia = $this->jamTersedia($posisi, $areaId, $cabangId, $ukerId);
+        $jamTersedia = $this->jamTersedia(
+            $posisi->toDateString(),
+            $areaId,
+            $cabangId,
+            $ukerId,
+            $produk,
+        );
         $jamAktif = $jam ?? (end($jamTersedia) ?: null);
+        $jamSebelum = $jamAktif === null
+            ? null
+            : collect($jamTersedia)->filter(fn (int $nilai) => $nilai < $jamAktif)->max();
 
         if ($jamAktif === null) {
-            return ['tanggal' => $posisi, 'jam' => null, 'grouping' => $perUker ? 'uker' : 'cabang', 'baris' => []];
+            return [
+                'tanggal' => $posisi->toDateString(),
+                'jam' => null,
+                'jam_sebelum' => null,
+                'grouping' => $perUker ? 'uker' : 'cabang',
+                'tanggal_referensi' => [],
+                'baris' => [],
+            ];
         }
 
-        $sekarang = $this->dasarHourly($areaId, $cabangId, $ukerId)
-            ->where('tanggal', $posisi)
-            ->where('jam', $jamAktif)
-            ->groupBy($kolom)
-            ->selectRaw("{$kolom} as entitas_id, SUM(saldo) as total")
-            ->pluck('total', 'entitas_id');
-
-        $tanggalBaseline = $this->tanggalHarianSebelum(Carbon::parse($posisi), $areaId, $cabangId, $ukerId);
-
-        $baseline = $tanggalBaseline === null
+        $sekarang = $this->saldoHourlyPerEntitas(
+            $posisi->toDateString(),
+            $jamAktif,
+            $kolom,
+            $areaId,
+            $cabangId,
+            $ukerId,
+            $produk,
+        );
+        $sebelumnya = $jamSebelum === null
             ? collect()
-            : $this->dasarHarian($areaId, $cabangId, $ukerId)
-                ->where('tanggal', $tanggalBaseline)
-                ->groupBy($kolom)
-                ->selectRaw("{$kolom} as entitas_id, SUM(saldo) as total")
-                ->pluck('total', 'entitas_id');
+            : $this->saldoHourlyPerEntitas(
+                $posisi->toDateString(),
+                $jamSebelum,
+                $kolom,
+                $areaId,
+                $cabangId,
+                $ukerId,
+                $produk,
+            );
 
-        $nama = $this->namaEntitas($perUker, $sekarang->keys());
+        $referensi = $this->tanggalReferensi($posisi, $areaId, $cabangId, $ukerId, $produk);
+        $harian = [];
 
-        $baris = $sekarang->map(function ($total, $entitasId) use ($baseline, $nama) {
-            $nilai = (float) $total;
-            $awal = $baseline->has($entitasId) ? (float) $baseline[$entitasId] : null;
+        foreach ($referensi as $jenis => $tanggalRef) {
+            $harian[$jenis] = $tanggalRef === null
+                ? collect()
+                : $this->saldoHarianPerEntitas(
+                    $tanggalRef,
+                    $kolom,
+                    $areaId,
+                    $cabangId,
+                    $ukerId,
+                    $produk,
+                );
+        }
+
+        $target = $this->targetPerEntitas(
+            $posisi->year,
+            $posisi->month,
+            $kolom,
+            $areaId,
+            $cabangId,
+            $ukerId,
+            $produk,
+        );
+        $nama = $perUker
+            ? Uker::query()->whereIn('id', $sekarang->keys())->pluck('nama', 'id')
+            : Cabang::query()->whereIn('id', $sekarang->keys())->pluck('nama', 'id');
+
+        $baris = $sekarang->map(function ($total, $entitasId) use ($sebelumnya, $harian, $target, $nama) {
+            $aktual = (float) $total;
+            $rka = (float) ($target[$entitasId] ?? 0);
 
             return [
                 'id' => (int) $entitasId,
                 'nama' => $nama[$entitasId] ?? (string) $entitasId,
-                'nilai' => Satuan::toJuta($nilai),
-                'baseline' => $awal === null ? null : Satuan::toJuta($awal),
-                'delta' => $this->selisih($nilai, $awal),
+                'nilai' => Satuan::toJuta($aktual),
+                'saldo_bulan_lalu' => Satuan::toJuta($harian['mtd'][$entitasId] ?? null),
+                'target' => Satuan::toJuta($rka),
+                'pencapaian' => $rka > 0 ? round($aktual / $rka * 100, 2) : null,
+                'delta' => [
+                    'h1' => Delta::hitung($aktual, $sebelumnya->has($entitasId) ? (float) $sebelumnya[$entitasId] : null),
+                    'dtd' => Delta::hitung($aktual, $harian['dtd']->has($entitasId) ? (float) $harian['dtd'][$entitasId] : null),
+                    'mtd' => Delta::hitung($aktual, $harian['mtd']->has($entitasId) ? (float) $harian['mtd'][$entitasId] : null),
+                    'ytd' => Delta::hitung($aktual, $harian['ytd']->has($entitasId) ? (float) $harian['ytd'][$entitasId] : null),
+                    'yoy' => Delta::hitung($aktual, $harian['yoy']->has($entitasId) ? (float) $harian['yoy'][$entitasId] : null),
+                ],
             ];
         })->values()->sortByDesc('nilai')->values()->all();
 
         return [
-            'tanggal' => $posisi,
+            'tanggal' => $posisi->toDateString(),
             'jam' => $jamAktif,
-            'tanggal_baseline' => $tanggalBaseline,
+            'jam_sebelum' => $jamSebelum,
+            'tanggal_referensi' => $referensi,
             'grouping' => $perUker ? 'uker' : 'cabang',
             'baris' => $baris,
         ];
     }
 
     /**
-     * @param  Collection<int, mixed>  $id
-     * @return Collection<int, string>
+     * @return array{dtd: string|null, mtd: string|null, ytd: string|null, yoy: string|null}
      */
-    private function namaEntitas(bool $perUker, Collection $id): Collection
-    {
-        return $perUker
-            ? \App\Models\Uker::query()->whereIn('id', $id)->pluck('nama', 'id')
-            : \App\Models\Cabang::query()->whereIn('id', $id)->pluck('nama', 'id');
+    private function tanggalReferensi(
+        Carbon $posisi,
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $produk,
+    ): array {
+        return [
+            'dtd' => $this->tanggalHarianTersedia($posisi->copy()->subDay(), $areaId, $cabangId, $ukerId, $produk),
+            'mtd' => $this->tanggalHarianTersedia($posisi->copy()->subMonthNoOverflow()->endOfMonth(), $areaId, $cabangId, $ukerId, $produk),
+            'ytd' => $this->tanggalHarianTersedia($posisi->copy()->subYear()->endOfYear(), $areaId, $cabangId, $ukerId, $produk),
+            'yoy' => $this->tanggalHarianTersedia($posisi->copy()->subYear(), $areaId, $cabangId, $ukerId, $produk),
+        ];
     }
 
-    /**
-     * Tanggal HARIAN terakhir yang tersedia SEBELUM tanggal posisi.
-     *
-     * Dicari di tabel `simpanan`, bukan `simpanan_hourly`.
-     */
-    private function tanggalHarianSebelum(Carbon $posisi, ?int $areaId, ?int $cabangId, ?int $ukerId): ?string
-    {
-        $tanggal = $this->dasarHarian($areaId, $cabangId, $ukerId)
-            ->where('tanggal', '<', $posisi->toDateString())
+    private function tanggalHarianTersedia(
+        Carbon $batas,
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $produk,
+    ): ?string {
+        $tanggal = $this->dasarHarian($areaId, $cabangId, $ukerId, $produk)
+            ->where('tanggal', '<=', $batas->toDateString())
             ->max('tanggal');
 
         return $tanggal === null ? null : Carbon::parse($tanggal)->toDateString();
     }
 
-    /**
-     * @return array<string, float>
-     */
-    private function saldoPerProduk(string $tanggal, int $jam, ?int $areaId, ?int $cabangId, ?int $ukerId): array
-    {
-        return $this->dasarHourly($areaId, $cabangId, $ukerId)
+    /** @return array<string, float> */
+    private function saldoHourlyPerProduk(
+        string $tanggal,
+        int $jam,
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $produk,
+    ): array {
+        return $this->dasarHourly($areaId, $cabangId, $ukerId, $produk)
             ->where('tanggal', $tanggal)
             ->where('jam', $jam)
             ->groupBy('produk')
             ->selectRaw('produk, SUM(saldo) as total')
             ->pluck('total', 'produk')
-            ->map(fn ($v) => (float) $v)
+            ->map(fn ($nilai) => (float) $nilai)
             ->all();
     }
 
     /**
-     * @return array<string, float>
+     * @param  list<string>  $tanggal
+     * @return array<string, array<string, float>>
      */
-    private function saldoHarianPerProduk(string $tanggal, ?int $areaId, ?int $cabangId, ?int $ukerId): array
-    {
-        return $this->dasarHarian($areaId, $cabangId, $ukerId)
+    private function saldoHarianPerTanggalProduk(
+        array $tanggal,
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $produk,
+    ): array {
+        if ($tanggal === []) {
+            return [];
+        }
+
+        return $this->dasarHarian($areaId, $cabangId, $ukerId, $produk)
+            ->whereIn('tanggal', $tanggal)
+            ->groupBy('tanggal', 'produk')
+            ->selectRaw('tanggal, produk, SUM(saldo) as total')
+            ->get()
+            ->groupBy(fn ($row) => Carbon::parse($row->tanggal)->toDateString())
+            ->map(fn (Collection $rows) => $rows
+                ->pluck('total', 'produk')
+                ->map(fn ($nilai) => (float) $nilai)
+                ->all())
+            ->all();
+    }
+
+    /** @return Collection<int, float> */
+    private function saldoHourlyPerEntitas(
+        string $tanggal,
+        int $jam,
+        string $kolom,
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $produk,
+    ): Collection {
+        return $this->dasarHourly($areaId, $cabangId, $ukerId, $produk)
             ->where('tanggal', $tanggal)
+            ->where('jam', $jam)
+            ->groupBy($kolom)
+            ->selectRaw("{$kolom} as entitas_id, SUM(saldo) as total")
+            ->pluck('total', 'entitas_id')
+            ->map(fn ($nilai) => (float) $nilai);
+    }
+
+    /** @return Collection<int, float> */
+    private function saldoHarianPerEntitas(
+        string $tanggal,
+        string $kolom,
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $produk,
+    ): Collection {
+        return $this->dasarHarian($areaId, $cabangId, $ukerId, $produk)
+            ->where('tanggal', $tanggal)
+            ->groupBy($kolom)
+            ->selectRaw("{$kolom} as entitas_id, SUM(saldo) as total")
+            ->pluck('total', 'entitas_id')
+            ->map(fn ($nilai) => (float) $nilai);
+    }
+
+    /** @return array<string, float> */
+    private function targetPerProduk(
+        int $tahun,
+        int $bulan,
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $produk,
+    ): array {
+        return $this->dasarTarget($areaId, $cabangId, $ukerId, $produk)
+            ->where('tahun', $tahun)
+            ->where('bulan', $bulan)
             ->groupBy('produk')
-            ->selectRaw('produk, SUM(saldo) as total')
+            ->selectRaw('produk, SUM(target) as total')
             ->pluck('total', 'produk')
-            ->map(fn ($v) => (float) $v)
+            ->map(fn ($nilai) => (float) $nilai)
             ->all();
     }
 
-    /**
-     * @param  array<string, float>  $perProduk
-     * @return array<string, float>
-     */
+    /** @return Collection<int, float> */
+    private function targetPerEntitas(
+        int $tahun,
+        int $bulan,
+        string $kolom,
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $produk,
+    ): Collection {
+        return $this->dasarTarget($areaId, $cabangId, $ukerId, $produk)
+            ->where('tahun', $tahun)
+            ->where('bulan', $bulan)
+            ->groupBy($kolom)
+            ->selectRaw("{$kolom} as entitas_id, SUM(target) as total")
+            ->pluck('total', 'entitas_id')
+            ->map(fn ($nilai) => (float) $nilai);
+    }
+
+    /** @param array<string, float> $perProduk */
     private function agregat(array $perProduk): array
     {
         $tabungan = (float) ($perProduk[Simpanan::PRODUK_TABUNGAN] ?? 0);
@@ -315,44 +528,50 @@ class SimpananHourlyService
         ];
     }
 
-    /**
-     * @return array{nilai: float|null, persen: float|null}
-     */
-    private function selisih(?float $aktual, ?float $pembanding): array
+    private function normalisasiProduk(?string $produk): ?string
     {
-        if ($aktual === null || $pembanding === null) {
-            return ['nilai' => null, 'persen' => null];
-        }
-
-        return [
-            'nilai' => Satuan::toJuta($aktual - $pembanding),
-            'persen' => $pembanding == 0.0 ? null : round(($aktual - $pembanding) / abs($pembanding) * 100, 2),
-        ];
+        return in_array($produk, Simpanan::PRODUK, true) ? $produk : null;
     }
 
-    /**
-     * @return Builder<SimpananHourly>
-     */
-    private function dasarHourly(?int $areaId, ?int $cabangId, ?int $ukerId): Builder
-    {
+    private function dasarHourly(
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $produk = null,
+    ): Builder {
         return $this->filterOrganisasi(
             SimpananHourly::query()->where('cabang_id', '!=', self::EXCLUDED_REGION_ID),
             $areaId,
             $cabangId,
             $ukerId,
-        );
+        )->when($this->normalisasiProduk($produk) !== null, fn (Builder $query) => $query->where('produk', $produk));
     }
 
-    /**
-     * @return Builder<Simpanan>
-     */
-    private function dasarHarian(?int $areaId, ?int $cabangId, ?int $ukerId): Builder
-    {
+    private function dasarHarian(
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $produk = null,
+    ): Builder {
         return $this->filterOrganisasi(
             Simpanan::query()->where('cabang_id', '!=', self::EXCLUDED_REGION_ID),
             $areaId,
             $cabangId,
             $ukerId,
-        );
+        )->when($this->normalisasiProduk($produk) !== null, fn (Builder $query) => $query->where('produk', $produk));
+    }
+
+    private function dasarTarget(
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $produk = null,
+    ): Builder {
+        return $this->filterOrganisasi(
+            RkaSimpanan::query()->where('cabang_id', '!=', self::EXCLUDED_REGION_ID),
+            $areaId,
+            $cabangId,
+            $ukerId,
+        )->when($this->normalisasiProduk($produk) !== null, fn (Builder $query) => $query->where('produk', $produk));
     }
 }

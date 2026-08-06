@@ -79,6 +79,7 @@ class PinjamanDashboardController extends Controller
 
         return response()->json($this->service->produk(
             $this->tanggal($request),
+            $this->tab($request),
             $areaId,
             $cabangId,
             $ukerId,

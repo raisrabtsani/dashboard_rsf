@@ -55,10 +55,41 @@ class SimpananService
      */
     public function filterOptions(?int $areaId, ?int $cabangId): array
     {
+        $segmentasi = Simpanan::query()
+            ->whereNotNull('segmentasi')
+            ->where('segmentasi', '!=', '')
+            ->distinct()
+            ->orderBy('segmentasi')
+            ->pluck('segmentasi')
+            ->merge(
+                RkaSimpanan::query()
+                    ->whereNotNull('segmentasi')
+                    ->where('segmentasi', '!=', '')
+                    ->distinct()
+                    ->pluck('segmentasi'),
+            )
+            ->filter()
+            ->unique(fn ($nilai) => mb_strtolower(trim((string) $nilai)))
+            ->sortBy(fn ($nilai) => mb_strtolower((string) $nilai))
+            ->values()
+            ->all();
+
+        $periode = Simpanan::query()
+            ->whereNotNull('tanggal')
+            ->distinct()
+            ->orderByDesc('tanggal')
+            ->pluck('tanggal')
+            ->map(fn ($tanggal) => Carbon::parse($tanggal)->toDateString())
+            ->values()
+            ->all();
+
         return [
             'area' => Area::query()->orderBy('nama')->get(['id', 'nama'])->toArray(),
             'cabang' => $this->cabangPerArea($areaId),
             'uker' => $cabangId === null ? [] : $this->ukerPerCabang($cabangId),
+            'segmentasi' => $segmentasi,
+            'produk' => [...Simpanan::PRODUK, 'CASA'],
+            'periode' => $periode,
             'tanggal_maks' => $this->tanggalTerakhir(),
             'tanggal_min' => Simpanan::query()->min('tanggal'),
         ];
@@ -87,22 +118,22 @@ class SimpananService
      *
      * @return array<string, mixed>
      */
-    public function snapshot(string $tanggal, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+    public function snapshot(string $tanggal, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $segmentasi = null): array
     {
         $posisi = Carbon::parse($tanggal)->startOfDay();
 
         // Tanggal pembanding di-resolve ke tanggal TERSEDIA terakhir <= target,
         // supaya akhir pekan / hari libur tidak bikin delta kosong.
         $referensi = [
-            'dtd' => $this->tanggalTersedia($posisi->copy()->subDay(), $areaId, $cabangId, $ukerId),
-            'mtd' => $this->tanggalTersedia($posisi->copy()->subMonthNoOverflow()->endOfMonth(), $areaId, $cabangId, $ukerId),
-            'ytd' => $this->tanggalTersedia($posisi->copy()->subYear()->endOfYear(), $areaId, $cabangId, $ukerId),
-            'yoy' => $this->tanggalTersedia($posisi->copy()->subYear(), $areaId, $cabangId, $ukerId),
+            'dtd' => $this->tanggalTersedia($posisi->copy()->subDay(), $areaId, $cabangId, $ukerId, $segmentasi),
+            'mtd' => $this->tanggalTersedia($posisi->copy()->subMonthNoOverflow()->endOfMonth(), $areaId, $cabangId, $ukerId, $segmentasi),
+            'ytd' => $this->tanggalTersedia($posisi->copy()->subYear()->endOfYear(), $areaId, $cabangId, $ukerId, $segmentasi),
+            'yoy' => $this->tanggalTersedia($posisi->copy()->subYear(), $areaId, $cabangId, $ukerId, $segmentasi),
         ];
 
         $tanggalDibaca = collect($referensi)->push($posisi->toDateString())->filter()->unique()->values();
-        $saldo = $this->saldoPerTanggalProduk($tanggalDibaca->all(), $areaId, $cabangId, $ukerId);
-        $target = $this->targetPerProduk($posisi->year, $posisi->month, $areaId, $cabangId, $ukerId);
+        $saldo = $this->saldoPerTanggalProduk($tanggalDibaca->all(), $areaId, $cabangId, $ukerId, $segmentasi);
+        $target = $this->targetPerProduk($posisi->year, $posisi->month, $areaId, $cabangId, $ukerId, $segmentasi);
 
         $nilaiPosisi = $this->agregatKartu($saldo[$posisi->toDateString()] ?? []);
         $nilaiTarget = $this->agregatKartu($target);
@@ -138,6 +169,13 @@ class SimpananService
             'tanggal' => $posisi->toDateString(),
             'tanggal_referensi' => $referensi,
             'kartu' => $kartu,
+            'segmentasi' => $this->rincianSegmentasi(
+                $posisi->toDateString(),
+                $areaId,
+                $cabangId,
+                $ukerId,
+                $segmentasi,
+            ),
         ];
     }
 
@@ -149,12 +187,17 @@ class SimpananService
      *
      * @return array<string, mixed>
      */
-    public function chart(string $tanggal, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+    public function chart(string $tanggal, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $segmentasi = null): array
     {
         $posisi = Carbon::parse($tanggal)->startOfDay();
-        $rentang = [$posisi->copy()->startOfYear()->toDateString(), $posisi->toDateString()];
+        // Semua grafik tren DPK memakai 6 seri tetap:
+        // Desember tahun sebelumnya + 5 bulan berjalan sampai bulan posisi.
+        $rentang = [
+            $posisi->copy()->subYear()->month(12)->startOfMonth()->toDateString(),
+            $posisi->toDateString(),
+        ];
 
-        $total = $this->dasar($areaId, $cabangId, $ukerId)
+        $total = $this->dasar($areaId, $cabangId, $ukerId, $segmentasi)
             ->whereBetween('tanggal', $rentang)
             ->groupBy('tanggal')
             ->orderBy('tanggal')
@@ -162,7 +205,7 @@ class SimpananService
             ->pluck('total', 'tanggal');
 
         // Rincian per produk per tanggal — untuk chart Tabungan/Giro/Deposito/CASA.
-        $perProduk = $this->dasar($areaId, $cabangId, $ukerId)
+        $perProduk = $this->dasar($areaId, $cabangId, $ukerId, $segmentasi)
             ->whereBetween('tanggal', $rentang)
             ->groupBy('tanggal', 'produk')
             ->selectRaw('tanggal, produk, SUM(saldo) as total')
@@ -210,17 +253,25 @@ class SimpananService
     {
         return collect($perTanggal)
             ->mapWithKeys(fn ($total, $tgl) => [Carbon::parse($tgl)->toDateString() => $total])
-            // preserveKeys wajib: key-nya tanggal, masih dipakai di map di bawah.
-            ->groupBy(fn ($total, string $tgl) => (int) Carbon::parse($tgl)->month, preserveKeys: true)
-            ->map(fn (Collection $bulanan, int $bulan) => [
-                'bulan' => $bulan,
-                'nama' => self::NAMA_BULAN[$bulan],
-                'titik' => $bulanan->map(fn ($total, string $tgl) => [
-                    'tanggal' => $tgl,
-                    'hari' => (int) Carbon::parse($tgl)->day,
-                    'nilai' => Satuan::toJuta($total),
-                ])->values()->all(),
-            ])
+            // Gunakan key tahun-bulan agar Desember tahun lalu tidak tergabung
+            // dengan Desember tahun berjalan.
+            ->groupBy(fn ($total, string $tgl) => Carbon::parse($tgl)->format('Y-m'), preserveKeys: true)
+            ->map(function (Collection $bulanan, string $periode) {
+                $tanggalPeriode = Carbon::createFromFormat('Y-m', $periode)->startOfMonth();
+                $bulan = (int) $tanggalPeriode->month;
+
+                return [
+                    'periode' => $periode,
+                    'tahun' => (int) $tanggalPeriode->year,
+                    'bulan' => $bulan,
+                    'nama' => self::NAMA_BULAN[$bulan],
+                    'titik' => $bulanan->map(fn ($total, string $tgl) => [
+                        'tanggal' => $tgl,
+                        'hari' => (int) Carbon::parse($tgl)->day,
+                        'nilai' => Satuan::toJuta($total),
+                    ])->values()->all(),
+                ];
+            })
             ->sortKeys()
             ->values()
             ->all();
@@ -238,73 +289,189 @@ class SimpananService
      *
      * @return array<string, mixed>
      */
-    public function branchPencapaian(string $tanggal, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+    public function branchPencapaian(
+        string $tanggal,
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $segmentasi = null,
+        ?string $produk = null,
+    ): array
     {
         $posisi = Carbon::parse($tanggal)->startOfDay();
         $perUker = $cabangId !== null;
         $kolom = $perUker ? 'uker_id' : 'cabang_id';
 
-        $aktual = $this->dasar($areaId, $cabangId, $ukerId)
+        $aktual = $this->dasar($areaId, $cabangId, $ukerId, $segmentasi, $produk)
             ->where('tanggal', $posisi->toDateString())
             ->groupBy($kolom)
             ->selectRaw("{$kolom} as entitas_id, SUM(saldo) as total")
             ->pluck('total', 'entitas_id');
 
-        $target = RkaSimpanan::query()
+        $targetQuery = RkaSimpanan::query()
             ->when(! $perUker, fn (Builder $q) => $q->where('cabang_id', '!=', self::EXCLUDED_REGION_ID))
             ->when($perUker, fn (Builder $q) => $q->where('cabang_id', $cabangId))
             ->when($ukerId !== null, fn (Builder $q) => $q->where('uker_id', $ukerId))
-            ->when($areaId !== null && ! $perUker, fn (Builder $q) => $q->whereIn('cabang_id', $this->cabangDiArea($areaId)))
+            ->when($areaId !== null && ! $perUker, fn (Builder $q) => $q->whereIn('cabang_id', $this->cabangDiArea($areaId)));
+
+        $target = $this->filterDimensi($targetQuery, $segmentasi, $produk)
             ->where('tahun', $posisi->year)
             ->where('bulan', $posisi->month)
             ->groupBy($kolom)
             ->selectRaw("{$kolom} as entitas_id, SUM(target) as total")
             ->pluck('total', 'entitas_id');
 
-        $nama = $perUker
-            ? Uker::query()->whereIn('id', $aktual->keys())->pluck('nama', 'id')
-            : Cabang::query()->whereIn('id', $aktual->keys())->pluck('nama', 'id');
+        // Tanggal pembanding memakai tanggal data terakhir yang benar-benar tersedia.
+        // Ini menjaga delta tetap muncul saat posisi jatuh pada akhir pekan/libur.
+        $tanggalPembanding = [
+            'dtd' => $this->tanggalTersedia(
+                $posisi->copy()->subDay(),
+                $areaId,
+                $cabangId,
+                $ukerId,
+                $segmentasi,
+                $produk,
+            ),
+            'mtd' => $this->tanggalTersedia(
+                $posisi->copy()->startOfMonth()->subDay(),
+                $areaId,
+                $cabangId,
+                $ukerId,
+                $segmentasi,
+                $produk,
+            ),
+            'ytd' => $this->tanggalTersedia(
+                $posisi->copy()->startOfYear()->subDay(),
+                $areaId,
+                $cabangId,
+                $ukerId,
+                $segmentasi,
+                $produk,
+            ),
+            'yoy' => $this->tanggalTersedia(
+                $posisi->copy()->subYear(),
+                $areaId,
+                $cabangId,
+                $ukerId,
+                $segmentasi,
+                $produk,
+            ),
+        ];
 
-        $baris = $aktual->map(function ($total, $entitasId) use ($target, $nama) {
+        $pembanding = collect($tanggalPembanding)->map(
+            fn (?string $tanggalBanding) => $this->saldoPerEntitas(
+                $tanggalBanding,
+                $kolom,
+                $areaId,
+                $cabangId,
+                $ukerId,
+                $segmentasi,
+                $produk,
+            ),
+        );
+
+        $entitas = $perUker
+            ? Uker::query()
+                ->with('cabang.area')
+                ->whereIn('id', $aktual->keys())
+                ->get()
+                ->keyBy('id')
+            : Cabang::query()
+                ->with('area')
+                ->whereIn('id', $aktual->keys())
+                ->get()
+                ->keyBy('id');
+
+        $baris = $aktual->map(function ($total, $entitasId) use ($target, $entitas, $pembanding, $perUker) {
             $rka = (float) ($target[$entitasId] ?? 0);
             $nilai = (float) $total;
+            $kantor = $entitas->get($entitasId);
+            $area = $perUker ? $kantor?->cabang?->area : $kantor?->area;
 
             return [
                 'id' => (int) $entitasId,
-                'nama' => $nama[$entitasId] ?? (string) $entitasId,
+                'nama' => $kantor?->nama ?? (string) $entitasId,
+                'area_id' => $area?->id,
+                'area_nama' => $area?->nama,
                 'nilai' => Satuan::toJuta($nilai),
                 'target' => Satuan::toJuta($rka),
                 'pencapaian' => $rka > 0 ? round($nilai / $rka * 100, 2) : null,
                 'gap' => Satuan::toJuta($nilai - $rka),
+                'dtd' => Delta::hitung($nilai, $pembanding->get('dtd')?->get($entitasId)),
+                'mtd' => Delta::hitung($nilai, $pembanding->get('mtd')?->get($entitasId)),
+                'ytd' => Delta::hitung($nilai, $pembanding->get('ytd')?->get($entitasId)),
+                'yoy' => Delta::hitung($nilai, $pembanding->get('yoy')?->get($entitasId)),
             ];
         })->values()->sortByDesc('nilai')->values()->all();
 
         return [
             'tanggal' => $posisi->toDateString(),
+            'tanggal_pembanding' => $tanggalPembanding,
             'grouping' => $perUker ? 'uker' : 'cabang',
             'baris' => $baris,
         ];
     }
 
     /**
+     * Ambil saldo per cabang/uker pada satu tanggal pembanding.
+     *
+     * @return Collection<int|string, float>
+     */
+    private function saldoPerEntitas(
+        ?string $tanggal,
+        string $kolom,
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $segmentasi,
+        ?string $produk,
+    ): Collection {
+        if ($tanggal === null) {
+            return collect();
+        }
+
+        return $this->dasar($areaId, $cabangId, $ukerId, $segmentasi, $produk)
+            ->where('tanggal', $tanggal)
+            ->groupBy($kolom)
+            ->selectRaw("{$kolom} as entitas_id, SUM(saldo) as total")
+            ->pluck('total', 'entitas_id')
+            ->map(fn ($nilai) => (float) $nilai);
+    }
+
+    /**
      * Query dasar dengan filter organisasi + pengecualian rollup 855.
      */
-    private function dasar(?int $areaId, ?int $cabangId, ?int $ukerId): Builder
+    private function dasar(
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $segmentasi = null,
+        ?string $produk = null,
+    ): Builder
     {
-        return $this->filterOrganisasi(
+        $query = $this->filterOrganisasi(
             Simpanan::query()->where('cabang_id', '!=', self::EXCLUDED_REGION_ID),
             $areaId,
             $cabangId,
             $ukerId,
         );
+
+        return $this->filterDimensi($query, $segmentasi, $produk);
     }
 
     /**
      * Tanggal data terakhir yang tersedia pada atau sebelum $batas.
      */
-    private function tanggalTersedia(Carbon $batas, ?int $areaId, ?int $cabangId, ?int $ukerId): ?string
+    private function tanggalTersedia(
+        Carbon $batas,
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $segmentasi = null,
+        ?string $produk = null,
+    ): ?string
     {
-        $tanggal = $this->dasar($areaId, $cabangId, $ukerId)
+        $tanggal = $this->dasar($areaId, $cabangId, $ukerId, $segmentasi, $produk)
             ->where('tanggal', '<=', $batas->toDateString())
             ->max('tanggal');
 
@@ -317,13 +484,19 @@ class SimpananService
      * @param  list<string>  $tanggal
      * @return array<string, array<string, float>>
      */
-    private function saldoPerTanggalProduk(array $tanggal, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+    private function saldoPerTanggalProduk(
+        array $tanggal,
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $segmentasi = null,
+    ): array
     {
         if ($tanggal === []) {
             return [];
         }
 
-        return $this->dasar($areaId, $cabangId, $ukerId)
+        return $this->dasar($areaId, $cabangId, $ukerId, $segmentasi)
             ->whereIn('tanggal', $tanggal)
             ->groupBy('tanggal', 'produk')
             ->selectRaw('tanggal, produk, SUM(saldo) as total')
@@ -336,13 +509,22 @@ class SimpananService
     /**
      * @return array<string, float>
      */
-    private function targetPerProduk(int $tahun, int $bulan, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+    private function targetPerProduk(
+        int $tahun,
+        int $bulan,
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $segmentasi = null,
+    ): array
     {
-        return RkaSimpanan::query()
+        $query = RkaSimpanan::query()
             ->where('cabang_id', '!=', self::EXCLUDED_REGION_ID)
             ->when($areaId !== null, fn (Builder $q) => $q->whereIn('cabang_id', $this->cabangDiArea($areaId)))
             ->when($cabangId !== null, fn (Builder $q) => $q->where('cabang_id', $cabangId))
-            ->when($ukerId !== null, fn (Builder $q) => $q->where('uker_id', $ukerId))
+            ->when($ukerId !== null, fn (Builder $q) => $q->where('uker_id', $ukerId));
+
+        return $this->filterDimensi($query, $segmentasi, null)
             ->where('tahun', $tahun)
             ->where('bulan', $bulan)
             ->groupBy('produk')
@@ -350,6 +532,69 @@ class SimpananService
             ->pluck('total', 'produk')
             ->map(fn ($v) => (float) $v)
             ->all();
+    }
+
+
+    /**
+     * Terapkan filter segmentasi dan produk pada tabel aktual maupun RKA.
+     */
+    private function filterDimensi(Builder $query, ?string $segmentasi, ?string $produk): Builder
+    {
+        $segmentasi = $segmentasi === null ? null : trim($segmentasi);
+        $produk = $produk === null ? null : trim($produk);
+
+        return $query
+            ->when(
+                $segmentasi !== null && $segmentasi !== '',
+                fn (Builder $q) => $q->whereRaw('LOWER(TRIM(segmentasi)) = ?', [mb_strtolower($segmentasi)]),
+            )
+            ->when(
+                mb_strtoupper((string) $produk) === 'CASA',
+                fn (Builder $q) => $q->whereIn('produk', [Simpanan::PRODUK_TABUNGAN, Simpanan::PRODUK_GIRO]),
+            )
+            ->when(
+                $produk !== null && $produk !== '' && mb_strtoupper($produk) !== 'CASA',
+                fn (Builder $q) => $q->whereRaw('LOWER(TRIM(produk)) = ?', [mb_strtolower($produk)]),
+            );
+    }
+
+    /**
+     * Ringkasan aktual per segmentasi untuk tabel Rincian Segmentasi.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function rincianSegmentasi(
+        string $tanggal,
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+        ?string $segmentasi,
+    ): array
+    {
+        $rows = $this->dasar($areaId, $cabangId, $ukerId, $segmentasi)
+            ->where('tanggal', $tanggal)
+            ->whereNotNull('segmentasi')
+            ->where('segmentasi', '!=', '')
+            ->groupBy('segmentasi', 'produk')
+            ->selectRaw('segmentasi, produk, SUM(saldo) as total')
+            ->get()
+            ->groupBy('segmentasi');
+
+        return $rows->map(function (Collection $produk, string $nama) {
+            $map = $produk->pluck('total', 'produk')->map(fn ($nilai) => (float) $nilai);
+            $tabungan = (float) ($map[Simpanan::PRODUK_TABUNGAN] ?? 0);
+            $giro = (float) ($map[Simpanan::PRODUK_GIRO] ?? 0);
+            $deposito = (float) ($map[Simpanan::PRODUK_DEPOSITO] ?? 0);
+
+            return [
+                'nama' => $nama,
+                'total_dpk' => Satuan::toJuta($tabungan + $giro + $deposito),
+                'tabungan' => Satuan::toJuta($tabungan),
+                'giro' => Satuan::toJuta($giro),
+                'deposito' => Satuan::toJuta($deposito),
+                'casa' => Satuan::toJuta($tabungan + $giro),
+            ];
+        })->sortBy(fn (array $row) => mb_strtolower($row['nama']))->values()->all();
     }
 
     /**

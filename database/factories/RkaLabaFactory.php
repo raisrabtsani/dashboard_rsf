@@ -18,8 +18,10 @@ class RkaLabaFactory extends Factory
     public function definition(): array
     {
         return [
-            'cabang_id' => 159,
-            'uker_id' => 159,
+            // Cabang 12 (KC Bogor) — ada di master Jakarta 2. `segmen` menyimpan
+            // label uko.
+            'cabang_id' => 12,
+            'uker_id' => 12,
             'segmen' => 'Micro',
             'tahun' => (int) now()->year,
             'bulan' => (int) now()->month,

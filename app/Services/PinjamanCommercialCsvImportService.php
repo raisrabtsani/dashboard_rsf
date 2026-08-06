@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\ImportException;
+use App\Services\Concerns\MelaporkanImport;
 use App\Models\Pinjaman;
 use App\Models\PinjamanCommercial;
 use App\Models\Uker;
@@ -22,6 +23,8 @@ use Throwable;
  */
 class PinjamanCommercialCsvImportService
 {
+    use MelaporkanImport;
+
     /**
      * @var array<string, list<string>>
      */
@@ -49,11 +52,14 @@ class PinjamanCommercialCsvImportService
         $agregat = $this->jumlahkan($mentah);
         $tanggal = $agregat->pluck('tanggal')->unique()->sort()->values();
 
-        $this->tolakBilaTanggalSudahAda($tanggal);
 
         DB::transaction(function () use ($agregat) {
             $agregat->chunk(1000)->each(
-                fn (Collection $potongan) => PinjamanCommercial::query()->insert($potongan->values()->all()),
+                fn (Collection $potongan) => PinjamanCommercial::query()->upsert(
+                    $potongan->values()->all(),
+                    ['uker_id', 'segmen', 'segmentasi', 'kualitas', 'tanggal'],
+                    ['cabang_id', 'baki_debet', 'updated_at'],
+                ),
             );
         });
 
@@ -62,6 +68,7 @@ class PinjamanCommercialCsvImportService
             'baris' => $agregat->count(),
             'sumber' => $mentah->count(),
             'total' => (float) $agregat->sum(fn (array $b) => $b['baki_debet']),
+            'laporan' => $this->laporanImport(),
         ];
     }
 
@@ -91,14 +98,13 @@ class PinjamanCommercialCsvImportService
                     'created_at' => $now,
                     'updated_at' => $now,
                 ];
-            })
-            ->values();
+            });
     }
 
     /**
      * @return list<array<string, mixed>>
      */
-    public function riwayat(int $batas = 60): array
+    public function riwayat(int $batas = 1000): array
     {
         return PinjamanCommercial::query()
             ->groupBy('tanggal')
@@ -163,7 +169,7 @@ class PinjamanCommercialCsvImportService
         $ukerValid = Uker::query()->pluck('cabang_id', 'id');
         $now = Carbon::now();
 
-        return $baris->map(function (array $r, int $i) use ($ukerValid, $now) {
+        return $this->petakanBarisAman($baris, function (array $r, int $i) use ($ukerValid, $now) {
             $nomor = $i + 2;
 
             $ukerId = (int) trim((string) $r['id_uker']);
@@ -195,7 +201,7 @@ class PinjamanCommercialCsvImportService
                 'created_at' => $now,
                 'updated_at' => $now,
             ];
-        })->values();
+        });
     }
 
     private function tanggal(mixed $nilai, int $nomor): string

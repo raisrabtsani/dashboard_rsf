@@ -2,13 +2,6 @@ import axios from 'axios';
 
 /**
  * Pabrik service API admin per domain.
- *
- * Semua domain memakai bentuk route yang sama:
- *   admin.upload.<domain>.{riwayat,store,unduh,hapus,bulk-month}
- *   admin.rka.<domain>.{data,store,hapus-tahun}
- *
- * Domain baru cukup memanggil buatAdminApi('<domain>') — jangan menyalin file
- * service admin per domain.
  */
 export function buatAdminApi(domain, { param = 'tanggal', massal = 'bulan' } = {}) {
     const unggah = (namaRoute, berkas) => {
@@ -23,15 +16,13 @@ export function buatAdminApi(domain, { param = 'tanggal', massal = 'bulan' } = {
         fetchRiwayat: () =>
             axios.get(route(`admin.upload.${domain}.riwayat`)).then((r) => r.data.riwayat ?? []),
 
+        previewAktual: (berkas) => unggah(`admin.upload.${domain}.preview`, berkas),
+
         uploadAktual: (berkas) => unggah(`admin.upload.${domain}.store`, berkas),
 
         hapusTanggal: (nilai) =>
             axios.delete(route(`admin.upload.${domain}.hapus`, { [param]: nilai })).then((r) => r.data),
 
-        /**
-         * Hapus massal. Domain harian memakai bulk-month (tahun+bulan); domain
-         * yang periodenya sudah bulanan (mis. PH) memakai hapus per tahun.
-         */
         hapusBulan: (tahun, bulan) =>
             massal === 'tahun'
                 ? axios
@@ -41,14 +32,20 @@ export function buatAdminApi(domain, { param = 'tanggal', massal = 'bulan' } = {
                     .delete(route(`admin.upload.${domain}.bulk-month`), { data: { tahun, bulan } })
                     .then((r) => r.data),
 
-        /** Unduhan ditangani browser lewat navigasi biasa. */
         urlUnduh: (nilai) => route(`admin.upload.${domain}.unduh`, { [param]: nilai }),
 
         // --- RKA ---
         fetchRka: () =>
-            axios.get(route(`admin.rka.${domain}.data`)).then((r) => r.data.ringkasan ?? []),
+            axios
+                .get(route('admin.rka-manage.data', { domain }))
+                .then((r) => r.data.ringkasan ?? []),
 
         uploadRka: (berkas) => unggah(`admin.rka.${domain}.store`, berkas),
+
+        hapusRkaPilihan: (pilihan) =>
+            axios
+                .delete(route('admin.rka-manage.selected', { domain }), { data: { pilihan } })
+                .then((r) => r.data),
 
         hapusRkaTahun: (tahun) =>
             axios.delete(route(`admin.rka.${domain}.hapus-tahun`, { tahun })).then((r) => r.data),
@@ -56,9 +53,7 @@ export function buatAdminApi(domain, { param = 'tanggal', massal = 'bulan' } = {
 }
 
 /**
- * Varian BULANAN untuk domain yang datanya per (tahun, bulan), bukan per
- * tanggal harian — mis. Laba. Riwayat, unduh, dan hapus dikunci pada periode
- * (tahun, bulan), plus hapus per tahun.
+ * Varian bulanan untuk domain seperti Laba.
  */
 export function buatAdminApiBulanan(domain) {
     const unggah = (namaRoute, berkas) => {

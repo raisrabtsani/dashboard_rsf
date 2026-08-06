@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\ImportException;
+use App\Services\Concerns\MelaporkanImport;
 use App\Models\Uker;
 use App\Support\Bulan;
 use App\Support\PetaKolom;
@@ -19,6 +20,8 @@ use Illuminate\Support\Facades\DB;
  */
 abstract class MerchantRkaImportService
 {
+    use MelaporkanImport;
+
     /**
      * @var array<string, list<string>>
      */
@@ -45,10 +48,6 @@ abstract class MerchantRkaImportService
     {
         ['baris' => $baris, 'dilewati' => $dilewati] = $this->baca($path, $namaAsli ?? basename($path));
 
-        if ($baris->isEmpty()) {
-            throw ImportException::berkas('Tidak ada baris target yang bisa diimpor dari berkas ini.');
-        }
-
         $model = $this->modelClass();
 
         DB::transaction(function () use ($baris, $model) {
@@ -64,6 +63,7 @@ abstract class MerchantRkaImportService
             'baris' => $baris->count(),
             'dilewati' => $dilewati,
             'total_target' => (float) $baris->sum(fn (array $b) => $b['target']),
+            'laporan' => $this->laporanImport(),
         ];
     }
 
@@ -110,7 +110,7 @@ abstract class MerchantRkaImportService
         $now = Carbon::now();
         $dilewati = 0;
 
-        $hasil = $baris->map(function (array $r, int $i) use ($ukerValid, $service, $now, &$dilewati) {
+        $hasil = $this->petakanBarisAman($baris, function (array $r, int $i) use ($ukerValid, $service, $now, &$dilewati) {
             $nomor = $i + 2;
 
             $ukerId = (int) trim((string) $r['id_uker']);
@@ -151,9 +151,8 @@ abstract class MerchantRkaImportService
                 'created_at' => $now,
                 'updated_at' => $now,
             ];
-        })->filter()->values();
+        });
 
-        $this->tolakBarisKembar($hasil, $namaBerkas);
 
         return ['baris' => $hasil, 'dilewati' => $dilewati];
     }

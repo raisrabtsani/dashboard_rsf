@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\ImportException;
+use App\Services\Concerns\MelaporkanImport;
 use App\Models\Simpanan;
 use App\Models\SimpananHourly;
 use App\Models\Uker;
@@ -27,11 +28,26 @@ use Throwable;
  */
 class SimpananHourlyCsvImportService
 {
-    /** Alias kolom sama dengan importer Simpanan harian. */
-    public const ALIAS = SimpananCsvImportService::ALIAS;
+    use MelaporkanImport;
+
+    /**
+     * Format hourly tetap memakai id_cabang karena perubahan kali ini hanya
+     * berlaku untuk Upload Simpanan harian. Konstanta dibuat mandiri agar tidak
+     * ikut berubah ketika format Simpanan harian disederhanakan.
+     *
+     * @var array<string, list<string>>
+     */
+    public const ALIAS = [
+        'id_cabang' => ['cabang_id', 'kode_cabang', 'cabang'],
+        'id_uker' => ['uker_id', 'kode_uker', 'uker'],
+        'produk' => [],
+        'segmentasi' => ['segmen'],
+        'tanggal' => ['tgl', 'date', 'periode', 'posisi', 'tanggal_posisi'],
+        'saldo' => ['nilai', 'nominal', 'outstanding'],
+    ];
 
     /** @var list<string> */
-    public const KOLOM = SimpananCsvImportService::KOLOM;
+    public const KOLOM = ['id_cabang', 'id_uker', 'produk', 'segmentasi', 'tanggal', 'saldo'];
 
     /**
      * @return array{tanggal: list<string>, jam: int, baris: int, sumber: int, total: float, bukan_eom: list<string>}
@@ -66,6 +82,7 @@ class SimpananHourlyCsvImportService
             'total' => (float) $agregat->sum(fn (array $b) => $b['saldo']),
             // Peringatan, bukan penolakan: domain ini memang untuk hari EOM,
             // tapi sesekali dipakai uji coba di hari biasa.
+            'laporan' => $this->laporanImport(),
             'bukan_eom' => $tanggal->reject(
                 fn (string $t) => Carbon::parse($t)->isSameDay(Carbon::parse($t)->endOfMonth()),
             )->values()->all(),
@@ -75,7 +92,7 @@ class SimpananHourlyCsvImportService
     /**
      * @return list<array<string, mixed>>
      */
-    public function riwayat(int $batas = 60): array
+    public function riwayat(int $batas = 1000): array
     {
         return SimpananHourly::query()
             ->groupBy('tanggal', 'jam')
@@ -136,8 +153,7 @@ class SimpananHourlyCsvImportService
                     'created_at' => $now,
                     'updated_at' => $now,
                 ];
-            })
-            ->values();
+            });
     }
 
     /**
@@ -150,7 +166,7 @@ class SimpananHourlyCsvImportService
 
         $ukerValid = Uker::query()->pluck('cabang_id', 'id');
 
-        return $baris->map(function (array $r, int $i) use ($ukerValid) {
+        return $this->petakanBarisAman($baris, function (array $r, int $i) use ($ukerValid) {
             $nomor = $i + 2;
 
             $ukerId = (int) trim((string) $r['id_uker']);
@@ -181,7 +197,7 @@ class SimpananHourlyCsvImportService
                 'tanggal' => $this->tanggal($r['tanggal'], $nomor),
                 'saldo' => $this->angka($r['saldo'], $nomor),
             ];
-        })->values();
+        });
     }
 
     private function tanggal(mixed $nilai, int $nomor): string

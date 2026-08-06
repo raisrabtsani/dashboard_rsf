@@ -3,9 +3,11 @@
 namespace App\Services;
 
 use App\Models\Area;
+use App\Models\Cabang;
 use App\Models\Ph;
 use App\Models\Pinjaman;
 use App\Models\Region;
+use App\Models\Uker;
 use App\Services\Concerns\MenyaringOrganisasi;
 use App\Support\Bulan;
 use App\Support\Satuan;
@@ -226,6 +228,68 @@ class PhNetDgService
         }
 
         return ['mode' => $mode, 'tahun' => $tahun, 'bulan' => $bulan, 'seri' => $seri];
+    }
+
+
+    /**
+     * Tabel kinerja cabang / uker untuk PH maupun Net DG.
+     *
+     * @return array<string, mixed>
+     */
+    public function branchPencapaian(string $mode, string $periode, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $scope = null): array
+    {
+        $posisi = Carbon::parse($periode)->endOfMonth();
+        $perUker = $cabangId !== null;
+        $kolom = $perUker ? 'uker_id' : 'cabang_id';
+        $segmen = $this->scopeToSegmen($scope);
+
+        $bulanLalu = $posisi->copy()->subMonthNoOverflow()->endOfMonth();
+        $tahunLalu = $posisi->copy()->subYear()->endOfMonth();
+        $desemberLalu = $posisi->copy()->subYear()->endOfYear();
+
+        $ambil = fn (Carbon $p) => $mode === self::MODE_PH
+            ? $this->nilaiPhPerEntitas($p, $kolom, $areaId, $cabangId, $ukerId, $segmen)
+            : $this->nilaiNetDgPerEntitas($p, $kolom, $areaId, $cabangId, $ukerId, $segmen);
+
+        $aktual = $ambil($posisi);
+        $periodeLalu = $ambil($tahunLalu);
+        $desember = $ambil($desemberLalu);
+        $mtdBasis = $ambil($bulanLalu);
+
+        $ids = $aktual->keys();
+        $entitas = $perUker
+            ? Uker::query()->with('cabang.area')->whereIn('id', $ids)->get()->keyBy('id')
+            : Cabang::query()->with('area')->whereIn('id', $ids)->get()->keyBy('id');
+
+        $baris = $aktual->map(function ($nilai, $entitasId) use ($periodeLalu, $desember, $mtdBasis, $entitas, $perUker) {
+            $kantor = $entitas->get($entitasId);
+            $area = $perUker ? $kantor?->cabang?->area : $kantor?->area;
+            $aktualNilai = $nilai === null ? null : (float) $nilai;
+            $laluNilai = $periodeLalu->has($entitasId) ? $periodeLalu[$entitasId] : null;
+            $desNilai = $desember->has($entitasId) ? $desember[$entitasId] : null;
+            $mtdNilai = $mtdBasis->has($entitasId) ? $mtdBasis[$entitasId] : null;
+
+            return [
+                'id' => (int) $entitasId,
+                'nama' => $kantor?->nama ?? (string) $entitasId,
+                'area_nama' => $area?->nama,
+                'periode_lalu' => $laluNilai,
+                'desember_lalu' => $desNilai,
+                'nilai' => $aktualNilai,
+                'mtd' => $this->selisih($aktualNilai, $mtdNilai),
+                'yoy' => $this->selisih($aktualNilai, $laluNilai),
+            ];
+        })->values()->sortByDesc('nilai')->values()->all();
+
+        return [
+            'mode' => $mode,
+            'periode' => $posisi->toDateString(),
+            'periode_lalu' => $tahunLalu->toDateString(),
+            'desember_lalu' => $desemberLalu->toDateString(),
+            'grouping' => $perUker ? 'uker' : 'cabang',
+            'scope' => $scope ?: 'total',
+            'baris' => $baris,
+        ];
     }
 
     /**
@@ -468,6 +532,98 @@ class PhNetDgService
         }
 
         return $segmen === null ? array_sum($isi) : ($isi[$segmen] ?? 0.0);
+    }
+
+
+    /**
+     * @return \Illuminate\Support\Collection<int|string, float>
+     */
+    private function nilaiPhPerEntitas(Carbon $periode, string $kolom, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $segmen): \Illuminate\Support\Collection
+    {
+        $query = $this->filterOrganisasi(Ph::query(), $areaId, $cabangId, $ukerId)
+            ->where('periode', $periode->copy()->endOfMonth()->toDateString());
+
+        if ($segmen !== null) {
+            $query->whereIn('segmen', Segmen::RAW[$segmen] ?? [$segmen]);
+        }
+
+        return $query
+            ->groupBy($kolom)
+            ->selectRaw("{$kolom} as entitas_id, SUM(saldo) as total")
+            ->pluck('total', 'entitas_id')
+            ->map(fn ($n) => Satuan::toJuta((float) $n));
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int|string, float>
+     */
+    private function nilaiNetDgPerEntitas(Carbon $periode, string $kolom, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $segmen): \Illuminate\Support\Collection
+    {
+        $akhirKini = $this->tanggalPosisiPinjamanAkhirBulan($periode, $areaId, $cabangId, $ukerId);
+        $akhirLalu = $this->tanggalPosisiPinjamanAkhirBulan($periode->copy()->subMonthNoOverflow()->endOfMonth(), $areaId, $cabangId, $ukerId);
+
+        if ($akhirKini === null || $akhirLalu === null) {
+            return collect();
+        }
+
+        $posisiKini = $this->posisiSmlNplPerEntitas($akhirKini, $kolom, $areaId, $cabangId, $ukerId, $segmen);
+        $posisiLalu = $this->posisiSmlNplPerEntitas($akhirLalu, $kolom, $areaId, $cabangId, $ukerId, $segmen);
+        $ph = $this->nilaiPhPerEntitas($periode, $kolom, $areaId, $cabangId, $ukerId, $segmen);
+
+        $ids = $posisiKini->keys()->merge($posisiLalu->keys())->merge($ph->keys())->unique()->values();
+
+        return $ids->mapWithKeys(function ($id) use ($posisiKini, $posisiLalu, $ph) {
+            $kini = $posisiKini->has($id) ? (float) $posisiKini[$id] : null;
+            $lalu = $posisiLalu->has($id) ? (float) $posisiLalu[$id] : null;
+            if ($kini === null || $lalu === null) {
+                return [];
+            }
+
+            return [$id => Satuan::toJuta($kini - $lalu + (($ph->has($id) ? (float) $ph[$id] : 0.0) * 1_000_000))];
+        });
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int|string, float>
+     */
+    private function posisiSmlNplPerEntitas(string $tanggal, string $kolom, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $segmen): \Illuminate\Support\Collection
+    {
+        $query = $this->filterOrganisasi(Pinjaman::query(), $areaId, $cabangId, $ukerId)
+            ->where('tanggal', $tanggal)
+            ->whereIn('kualitas', [Pinjaman::KUALITAS_SML, Pinjaman::KUALITAS_NPL]);
+
+        if ($segmen !== null) {
+            $query->whereIn('segmen', Segmen::RAW[$segmen] ?? [$segmen]);
+        }
+
+        return $query
+            ->groupBy($kolom)
+            ->selectRaw("{$kolom} as entitas_id, SUM(baki_debet) as total")
+            ->pluck('total', 'entitas_id');
+    }
+
+    private function tanggalPosisiPinjamanAkhirBulan(Carbon $periode, ?int $areaId, ?int $cabangId, ?int $ukerId): ?string
+    {
+        $tanggal = $this->filterOrganisasi(Pinjaman::query(), $areaId, $cabangId, $ukerId)
+            ->whereBetween('tanggal', [
+                $periode->copy()->startOfMonth()->toDateString(),
+                $periode->copy()->endOfMonth()->toDateString(),
+            ])
+            ->max('tanggal');
+
+        return $tanggal === null ? null : Carbon::parse($tanggal)->toDateString();
+    }
+
+    private function scopeToSegmen(?string $scope): ?string
+    {
+        $scope = strtolower(trim((string) $scope));
+
+        return match ($scope) {
+            'micro' => Segmen::MICRO,
+            'sme' => Segmen::SME,
+            'consumer' => Segmen::CONSUMER,
+            default => null,
+        };
     }
 
     /**

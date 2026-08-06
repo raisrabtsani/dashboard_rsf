@@ -46,6 +46,7 @@ class SimpananHourlyDashboardController extends Controller
             $areaId,
             $cabangId,
             $ukerId,
+            $this->produk($request),
         ));
     }
 
@@ -58,6 +59,7 @@ class SimpananHourlyDashboardController extends Controller
             $areaId,
             $cabangId,
             $ukerId,
+            $this->produk($request),
         ));
     }
 
@@ -71,6 +73,7 @@ class SimpananHourlyDashboardController extends Controller
             $areaId,
             $cabangId,
             $ukerId,
+            $this->produk($request),
         ));
     }
 
@@ -105,6 +108,13 @@ class SimpananHourlyDashboardController extends Controller
         $jam = $request->integer('jam');
 
         return $jam >= 0 && $jam <= 23 ? $jam : null;
+    }
+
+    private function produk(Request $request): ?string
+    {
+        $produk = $request->string('produk')->toString();
+
+        return in_array($produk, \App\Models\Simpanan::PRODUK, true) ? $produk : null;
     }
 
     private function tanggal(Request $request): string

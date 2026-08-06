@@ -15,9 +15,13 @@ class LabaImportTest extends TestCase
 {
     use RefreshDatabase;
 
-    private const CABANG = 159;
+    // Cabang 12 = KC Bogor; uker 804 = UNIT PURBASARI BOGOR (uko "Micro").
+    private const CABANG = 12;
 
-    private const UKER = 5438;
+    private const UKER = 804;
+
+    // uker 595 = KCP IPB, dilaporkan bisnis sebagai uko "Sub-Branch Office".
+    private const UKER_SBO = 595;
 
     protected function setUp(): void
     {
@@ -51,7 +55,8 @@ class LabaImportTest extends TestCase
             ->post('/admin/rka/laba', ['berkas' => $this->berkas($isi, 'rka-laba.csv')]);
     }
 
-    private const HEADER = "id_cabang,id_uker,segmen,tahun,bulan,laba\n";
+    // Format baru: kolom `uko` (jenis kantor) menggantikan `segmen`.
+    private const HEADER = "id_cabang,id_uker,uko,tahun,bulan,laba\n";
 
     public function test_upload_menyimpan_laba_kumulatif(): void
     {
@@ -63,6 +68,40 @@ class LabaImportTest extends TestCase
 
         $this->assertSame(2, Laba::query()->count());
         $this->assertSame(250_000_000.0, (float) Laba::query()->where('bulan', 2)->value('laba'));
+    }
+
+    public function test_format_asli_klien_dengan_kolom_unit_kerja_dan_angka_koma(): void
+    {
+        // Bentuk berkas asli: header berkapital/berspasi, kolom tambahan
+        // "Unit Kerja" (diabaikan), dan angka berformat Excel (koma + spasi).
+        $isi = "id_cabang,id_uker,uko,Unit Kerja,Tahun,Bulan, Laba \n"
+            .'12,12,Branch Office,KC Bogor,2026,Januari," 4,852,506,150 "'."\n"
+            .'12,595,Sub-Branch Office,KCP IPB,2026,Januari," 778,485,282 "'."\n"
+            .'12,804,Micro,UNIT PURBASARI BOGOR,2026,Januari," 197,591,346 "'."\n";
+
+        $this->unggah($isi)->assertOk();
+
+        $this->assertSame(3, Laba::query()->count());
+        $this->assertSame(
+            4_852_506_150.0,
+            (float) Laba::query()->where('uker_id', 12)->value('laba'),
+        );
+        // Segmen (uko) tersimpan apa adanya dari berkas.
+        $this->assertEqualsCanonicalizing(
+            ['Branch Office', 'Sub-Branch Office', 'Micro'],
+            Laba::query()->pluck('segmen')->all(),
+        );
+    }
+
+    public function test_uko_disimpan_ke_kolom_segmen(): void
+    {
+        // Label uko dari berkas diambil apa adanya (bukan diturunkan dari master).
+        // uker 595 tipe UNIT di master, tapi dilaporkan "Sub-Branch Office".
+        $isi = self::HEADER.self::CABANG.','.self::UKER_SBO.",Sub-Branch Office,2026,1,100000000\n";
+
+        $this->unggah($isi)->assertOk();
+
+        $this->assertSame('Sub-Branch Office', Laba::query()->value('segmen'));
     }
 
     public function test_upload_ulang_idempoten_lewat_upsert(): void
@@ -100,7 +139,7 @@ class LabaImportTest extends TestCase
     {
         $isi = self::HEADER
             .self::CABANG.','.self::UKER.",Micro,2026,1,\n"
-            .self::CABANG.','.self::UKER.",SME,2026,1,100000000\n";
+            .self::CABANG.','.self::UKER_SBO.",Sub-Branch Office,2026,1,100000000\n";
 
         $respons = $this->unggah($isi)->assertOk();
 
@@ -121,12 +160,17 @@ class LabaImportTest extends TestCase
         $this->assertSame(0, Laba::query()->count());
     }
 
-    public function test_uker_tak_dikenal_ditolak(): void
+    public function test_uker_tak_dikenal_dilewati_dan_dilaporkan(): void
     {
+        // Importer bersifat toleran per-baris (MelaporkanImport): baris dengan
+        // uker tak dikenal TIDAK menggagalkan seluruh berkas — dilewati (tidak
+        // tersimpan) lalu dilaporkan sebagai baris tidak valid.
         $isi = self::HEADER.self::CABANG.",999999,Micro,2026,1,100000000\n";
 
-        $this->unggah($isi)->assertStatus(422);
+        $respons = $this->unggah($isi)->assertOk();
+
         $this->assertSame(0, Laba::query()->count());
+        $this->assertSame(1, $respons->json('hasil.laporan.tidak_valid'));
     }
 
     public function test_riwayat_unduh_dan_hapus_per_periode(): void
@@ -147,7 +191,9 @@ class LabaImportTest extends TestCase
             ->get('/admin/upload/laba/unduh/2026/1')
             ->assertOk()
             ->streamedContent();
-        $this->assertStringContainsString('159,5438,Micro,2026,1', $isi);
+        // Header unduhan memakai kolom `uko`, nilainya kolom segmen.
+        $this->assertStringContainsString('uko', $isi);
+        $this->assertStringContainsString('12,804,Micro,2026,1', $isi);
 
         $this->actingAs($this->admin())
             ->deleteJson('/admin/upload/laba/2026/1')
@@ -174,7 +220,8 @@ class LabaImportTest extends TestCase
 
     public function test_rka_menerima_nama_bulan_dan_upsert(): void
     {
-        $isi = "id_cabang,id_uker,Segmen,Tahun,Bulan, RKA \n"
+        // Header "Uko" berkapital menguji toleransi nama kolom.
+        $isi = "id_cabang,id_uker,Uko,Tahun,Bulan, RKA \n"
             .self::CABANG.','.self::UKER.',Micro,2026,Februari," 500,000,000 "'."\n";
 
         $this->unggahRka($isi)->assertOk();
@@ -184,11 +231,12 @@ class LabaImportTest extends TestCase
         $this->assertSame(500_000_000.0, (float) $baris->target);
     }
 
-    public function test_rka_melewati_target_kosong(): void
+    public function test_rka_alias_segmen_masih_diterima(): void
     {
+        // Berkas lama berkolom `segmen` tetap diterima lewat alias uko.
         $isi = "id_cabang,id_uker,segmen,tahun,bulan,target\n"
             .self::CABANG.','.self::UKER.",Micro,2026,1,\n"
-            .self::CABANG.','.self::UKER.",SME,2026,1,100000000\n";
+            .self::CABANG.','.self::UKER_SBO.",Sub-Branch Office,2026,1,100000000\n";
 
         $respons = $this->unggahRka($isi)->assertOk();
 

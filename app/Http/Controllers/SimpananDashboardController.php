@@ -39,7 +39,13 @@ class SimpananDashboardController extends Controller
         [$areaId, $cabangId, $ukerId] = $this->filterId($request);
 
         return response()->json(
-            $this->service->snapshot($this->tanggal($request), $areaId, $cabangId, $ukerId),
+            $this->service->snapshot(
+                $this->tanggal($request),
+                $areaId,
+                $cabangId,
+                $ukerId,
+                $this->segmentasi($request),
+            ),
         );
     }
 
@@ -48,7 +54,13 @@ class SimpananDashboardController extends Controller
         [$areaId, $cabangId, $ukerId] = $this->filterId($request);
 
         return response()->json(
-            $this->service->chart($this->tanggal($request), $areaId, $cabangId, $ukerId),
+            $this->service->chart(
+                $this->tanggal($request),
+                $areaId,
+                $cabangId,
+                $ukerId,
+                $this->segmentasi($request),
+            ),
         );
     }
 
@@ -57,7 +69,14 @@ class SimpananDashboardController extends Controller
         [$areaId, $cabangId, $ukerId] = $this->filterId($request);
 
         return response()->json(
-            $this->service->branchPencapaian($this->tanggal($request), $areaId, $cabangId, $ukerId),
+            $this->service->branchPencapaian(
+                $this->tanggal($request),
+                $areaId,
+                $cabangId,
+                $ukerId,
+                $this->segmentasi($request),
+                $this->produk($request),
+            ),
         );
     }
 
@@ -84,13 +103,32 @@ class SimpananDashboardController extends Controller
     }
 
     /**
-     * @return array<string, int|null>
+     * @return array<string, int|string|null>
      */
     private function filter(Request $request): array
     {
         [$areaId, $cabangId, $ukerId] = $this->filterId($request);
 
-        return ['area_id' => $areaId, 'cabang_id' => $cabangId, 'uker_id' => $ukerId];
+        return [
+            'area_id' => $areaId,
+            'cabang_id' => $cabangId,
+            'uker_id' => $ukerId,
+            'segmentasi' => $this->segmentasi($request),
+        ];
+    }
+
+    private function segmentasi(Request $request): ?string
+    {
+        $nilai = trim((string) $request->input('segmentasi', ''));
+
+        return $nilai === '' ? null : $nilai;
+    }
+
+    private function produk(Request $request): ?string
+    {
+        $nilai = trim((string) $request->input('produk', ''));
+
+        return $nilai === '' ? null : $nilai;
     }
 
     private function tanggal(Request $request): string

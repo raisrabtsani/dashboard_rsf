@@ -62,6 +62,21 @@ class PhNetDgDashboardController extends Controller
         ));
     }
 
+
+    public function branchPencapaian(Request $request): JsonResponse
+    {
+        [$areaId, $cabangId, $ukerId] = $this->filterId($request);
+
+        return response()->json($this->service->branchPencapaian(
+            $this->mode($request),
+            $this->periode($request),
+            $areaId,
+            $cabangId,
+            $ukerId,
+            $request->string('scope')->toString(),
+        ));
+    }
+
     public function cabang(int $areaId): JsonResponse
     {
         return response()->json($this->service->cabangPerArea($areaId));

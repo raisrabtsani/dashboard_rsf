@@ -49,7 +49,13 @@ class RecoveryDashboardController extends Controller
         [$areaId, $cabangId, $ukerId] = $this->filterId($request);
 
         return response()->json(
-            $this->service->chart($this->tanggal($request), $areaId, $cabangId, $ukerId),
+            $this->service->chart(
+                $this->tanggal($request),
+                $areaId,
+                $cabangId,
+                $ukerId,
+                $request->string('scope')->toString(),
+            ),
         );
     }
 

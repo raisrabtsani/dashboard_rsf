@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\ImportException;
+use App\Services\Concerns\MelaporkanImport;
 use App\Models\Simpanan;
 use App\Models\SimpananWholesale;
 use App\Models\Uker;
@@ -21,6 +22,8 @@ use Throwable;
  */
 class SimpananWholesaleCsvImportService
 {
+    use MelaporkanImport;
+
     /**
      * @var array<string, list<string>>
      */
@@ -47,11 +50,14 @@ class SimpananWholesaleCsvImportService
         $agregat = $this->jumlahkan($mentah);
         $tanggal = $agregat->pluck('tanggal')->unique()->sort()->values();
 
-        $this->tolakBilaTanggalSudahAda($tanggal);
 
         DB::transaction(function () use ($agregat) {
             $agregat->chunk(1000)->each(
-                fn (Collection $potongan) => SimpananWholesale::query()->insert($potongan->values()->all()),
+                fn (Collection $potongan) => SimpananWholesale::query()->upsert(
+                    $potongan->values()->all(),
+                    ['uker_id', 'produk', 'segmentasi', 'tanggal'],
+                    ['cabang_id', 'saldo', 'updated_at'],
+                ),
             );
         });
 
@@ -60,6 +66,7 @@ class SimpananWholesaleCsvImportService
             'baris' => $agregat->count(),
             'sumber' => $mentah->count(),
             'total_saldo' => (float) $agregat->sum(fn (array $b) => $b['saldo']),
+            'laporan' => $this->laporanImport(),
         ];
     }
 
@@ -88,14 +95,13 @@ class SimpananWholesaleCsvImportService
                     'created_at' => $now,
                     'updated_at' => $now,
                 ];
-            })
-            ->values();
+            });
     }
 
     /**
      * @return list<array<string, mixed>>
      */
-    public function riwayat(int $batas = 60): array
+    public function riwayat(int $batas = 1000): array
     {
         return SimpananWholesale::query()
             ->groupBy('tanggal')
@@ -161,23 +167,33 @@ class SimpananWholesaleCsvImportService
         $ukerValid = Uker::query()->pluck('cabang_id', 'id');
         $now = Carbon::now();
 
-        return $baris
-            ->map(function (array $r, int $i) use ($ukerValid, $now) {
+        return $this->petakanBarisAman($baris, function (array $r, int $i) use ($ukerValid, $now) {
                 $nomor = $i + 2;
 
-                $ukerId = (int) trim((string) $r['id_uker']);
-                $cabangId = (int) trim((string) $r['id_cabang']);
+                $ukerMentah = trim((string) ($r['id_uker'] ?? ''));
+
+                // Nilai kode uker nol dari spreadsheet dapat terbaca sebagai
+                // 0, 0.0, 00, atau 0000. Semua variasi tersebut dilewati agar
+                // baris valid lainnya tetap diproses.
+                if ($ukerMentah === '' || (is_numeric($ukerMentah) && (int) (float) $ukerMentah === 0)) {
+                    return null;
+                }
+
+                $ukerId = is_numeric($ukerMentah)
+                    ? (int) (float) $ukerMentah
+                    : (int) $ukerMentah;
                 $produk = trim((string) $r['produk']);
 
+                // Kode uker yang belum tersedia di master dilewati saja.
+                // Baris valid lainnya tetap diproses dan diimpor.
                 if (! $ukerValid->has($ukerId)) {
-                    throw ImportException::berkas("Baris {$nomor}: id_uker {$ukerId} tidak ada di master uker.");
+                    return null;
                 }
 
-                if ($ukerValid[$ukerId] !== $cabangId) {
-                    throw ImportException::berkas(
-                        "Baris {$nomor}: id_uker {$ukerId} bukan milik cabang {$cabangId} (seharusnya {$ukerValid[$ukerId]}).",
-                    );
-                }
+                // Induk cabang selalu mengikuti master uker. Nilai id_cabang dari
+                // berkas hanya dianggap informasi tambahan dan tidak dipakai
+                // untuk menentukan relasi organisasi.
+                $cabangId = (int) $ukerValid[$ukerId];
 
                 if (! in_array($produk, Simpanan::PRODUK, true)) {
                     throw ImportException::berkas(
@@ -195,8 +211,7 @@ class SimpananWholesaleCsvImportService
                     'created_at' => $now,
                     'updated_at' => $now,
                 ];
-            })
-            ->values();
+            });
     }
 
     private function tanggal(mixed $nilai, int $nomor): string

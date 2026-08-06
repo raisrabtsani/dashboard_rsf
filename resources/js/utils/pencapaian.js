@@ -22,7 +22,7 @@ export const AMBANG_TOLERANSI_INVERSE = 105;
 const TEKS = {
     baik: 'text-emerald-600',
     sedang: 'text-amber-500',
-    buruk: 'text-rose-600',
+    buruk: 'text-rose-500',
     netral: 'text-gray-400',
 };
 

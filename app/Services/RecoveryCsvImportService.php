@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\ImportException;
+use App\Services\Concerns\MelaporkanImport;
 use App\Models\Recovery;
 use App\Models\Uker;
 use App\Support\PetaKolom;
@@ -34,6 +35,8 @@ use Throwable;
  */
 class RecoveryCsvImportService
 {
+    use MelaporkanImport;
+
     /**
      * @var array<string, list<string>>
      */
@@ -73,6 +76,7 @@ class RecoveryCsvImportService
             'sumber' => $mentah->count(),
             'segmen' => $agregat->pluck('segmen')->unique()->sort()->values()->all(),
             'total' => (float) $agregat->sum(fn (array $b) => $b['actual']),
+            'laporan' => $this->laporanImport(),
         ];
     }
 
@@ -81,7 +85,7 @@ class RecoveryCsvImportService
      *
      * @return list<array<string, mixed>>
      */
-    public function riwayat(int $batas = 60): array
+    public function riwayat(int $batas = 1000): array
     {
         return Recovery::query()
             ->groupBy('tanggal')
@@ -160,8 +164,7 @@ class RecoveryCsvImportService
                     'created_at' => $now,
                     'updated_at' => $now,
                 ];
-            })
-            ->values();
+            });
     }
 
     /**
@@ -174,7 +177,7 @@ class RecoveryCsvImportService
 
         $ukerValid = Uker::query()->pluck('cabang_id', 'id');
 
-        return $baris->map(function (array $r, int $i) use ($ukerValid) {
+        return $this->petakanBarisAman($baris, function (array $r, int $i) use ($ukerValid) {
             $nomor = $i + 2;
 
             $ukerId = (int) trim((string) $r['id_uker']);
@@ -198,7 +201,7 @@ class RecoveryCsvImportService
                 'tanggal' => $this->tanggal($r['tanggal'], $nomor),
                 'actual' => $this->angka($r['actual'], $nomor),
             ];
-        })->values();
+        });
     }
 
     private function tanggal(mixed $nilai, int $nomor): string

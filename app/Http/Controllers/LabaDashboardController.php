@@ -51,7 +51,9 @@ class LabaDashboardController extends Controller
         [$tahun] = $this->periode($request);
         [$areaId, $cabangId, $ukerId] = $this->filterId($request);
 
-        return response()->json($this->service->chart($tahun, $areaId, $cabangId, $ukerId));
+        $segmen = $request->filled('segmen') ? trim((string) $request->input('segmen')) : null;
+
+        return response()->json($this->service->chart($tahun, $areaId, $cabangId, $ukerId, $segmen));
     }
 
     public function chartMtd(Request $request): JsonResponse
@@ -59,7 +61,9 @@ class LabaDashboardController extends Controller
         [$tahun] = $this->periode($request);
         [$areaId, $cabangId, $ukerId] = $this->filterId($request);
 
-        return response()->json($this->service->chartMtd($tahun, $areaId, $cabangId, $ukerId));
+        $segmen = $request->filled('segmen') ? trim((string) $request->input('segmen')) : null;
+
+        return response()->json($this->service->chartMtd($tahun, $areaId, $cabangId, $ukerId, $segmen));
     }
 
     public function branchPencapaian(Request $request): JsonResponse

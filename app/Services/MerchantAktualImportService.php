@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\ImportException;
+use App\Services\Concerns\MelaporkanImport;
 use App\Models\Uker;
 use App\Support\PetaKolom;
 use App\Support\Satuan;
@@ -24,6 +25,8 @@ use Throwable;
  */
 abstract class MerchantAktualImportService
 {
+    use MelaporkanImport;
+
     /**
      * @var array<string, list<string>>
      */
@@ -66,13 +69,14 @@ abstract class MerchantAktualImportService
             'baris' => $baris->count(),
             'kpi' => $baris->pluck('kpi')->unique()->sort()->values()->all(),
             'total' => (float) $baris->sum(fn (array $b) => $b['actual']),
+            'laporan' => $this->laporanImport(),
         ];
     }
 
     /**
      * @return list<array<string, mixed>>
      */
-    public function riwayat(int $batas = 60): array
+    public function riwayat(int $batas = 1000): array
     {
         $model = $this->modelClass();
 
@@ -144,7 +148,7 @@ abstract class MerchantAktualImportService
         $service = $this->serviceClass();
         $now = Carbon::now();
 
-        $hasil = $baris->map(function (array $r, int $i) use ($ukerValid, $service, $now) {
+        $hasil = $this->petakanBarisAman($baris, function (array $r, int $i) use ($ukerValid, $service, $now) {
             $nomor = $i + 2;
 
             $ukerId = (int) trim((string) $r['id_uker']);
@@ -173,9 +177,8 @@ abstract class MerchantAktualImportService
                 'created_at' => $now,
                 'updated_at' => $now,
             ];
-        })->values();
+        });
 
-        $this->tolakBarisKembar($hasil, $namaBerkas);
 
         return $hasil;
     }

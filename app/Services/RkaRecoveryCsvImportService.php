@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\ImportException;
+use App\Services\Concerns\MelaporkanImport;
 use App\Models\RkaRecovery;
 use App\Models\Uker;
 use App\Support\Bulan;
@@ -28,6 +29,8 @@ use Illuminate\Support\Facades\DB;
  */
 class RkaRecoveryCsvImportService
 {
+    use MelaporkanImport;
+
     /**
      * @var array<string, list<string>>
      */
@@ -50,10 +53,6 @@ class RkaRecoveryCsvImportService
     {
         ['baris' => $baris, 'dilewati' => $dilewati] = $this->baca($path, $namaAsli ?? basename($path));
 
-        if ($baris->isEmpty()) {
-            throw ImportException::berkas('Tidak ada baris target yang bisa diimpor dari berkas ini.');
-        }
-
         DB::transaction(function () use ($baris) {
             $baris->chunk(1000)->each(fn (Collection $potongan) => RkaRecovery::query()->upsert(
                 $potongan->values()->all(),
@@ -67,6 +66,7 @@ class RkaRecoveryCsvImportService
             'baris' => $baris->count(),
             'dilewati' => $dilewati,
             'total_target' => (float) $baris->sum(fn (array $b) => $b['target']),
+            'laporan' => $this->laporanImport(),
         ];
     }
 
@@ -108,7 +108,7 @@ class RkaRecoveryCsvImportService
         $now = Carbon::now();
         $dilewati = 0;
 
-        $hasil = $baris->map(function (array $r, int $i) use ($ukerValid, $now, &$dilewati) {
+        $hasil = $this->petakanBarisAman($baris, function (array $r, int $i) use ($ukerValid, $now, &$dilewati) {
             $nomor = $i + 2;
 
             $ukerId = (int) trim((string) $r['id_uker']);
@@ -144,9 +144,8 @@ class RkaRecoveryCsvImportService
                 'created_at' => $now,
                 'updated_at' => $now,
             ];
-        })->filter()->values();
+        });
 
-        $this->tolakBarisKembar($hasil, $namaBerkas);
 
         return ['baris' => $hasil, 'dilewati' => $dilewati];
     }

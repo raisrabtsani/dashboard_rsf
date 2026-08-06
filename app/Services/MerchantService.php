@@ -200,23 +200,48 @@ abstract class MerchantService
         $entri = $this->kpiByKode($kpi);
         $posisi = Carbon::parse($tanggal)->startOfDay();
 
+        // Enam seri baku: Desember tahun sebelumnya + lima bulan berjalan.
+        // Contoh posisi Agustus 2026: Des 2025, Apr, Mei, Jun, Jul, Ags 2026.
+        $periode = collect(range(0, 4))
+            ->map(fn (int $mundur) => $posisi->copy()->subMonthsNoOverflow($mundur)->format('Y-m'))
+            ->push($posisi->copy()->subYear()->month(12)->format('Y-m'))
+            ->unique()
+            ->sort()
+            ->values();
+
+        $awalQuery = $entri['flow']
+            ? Carbon::create((int) substr((string) $periode->first(), 0, 4), 1, 1)->startOfDay()
+            : Carbon::createFromFormat('Y-m-d', $periode->first().'-01')->startOfDay();
+
         $harian = $this->dasar($areaId, $cabangId, $ukerId)
             ->where('kpi', $entri['kode'])
-            ->whereBetween('tanggal', [$posisi->copy()->startOfYear()->toDateString(), $posisi->toDateString()])
+            ->whereBetween('tanggal', [$awalQuery->toDateString(), $posisi->toDateString()])
             ->groupBy('tanggal')
             ->orderBy('tanggal')
             ->selectRaw('tanggal, SUM(actual) as total')
             ->pluck('total', 'tanggal');
 
         if ($entri['flow']) {
-            // Data marginal -> akumulasi berjalan supaya garisnya kumulatif YTD.
+            // Running sum di-reset setiap pergantian tahun agar Desember tahun
+            // sebelumnya dan bulan berjalan tidak saling mencampur.
             $jalan = 0.0;
-            $harian = collect($harian)->map(function ($v) use (&$jalan) {
+            $tahunAktif = null;
+            $harian = collect($harian)->map(function ($v, $tgl) use (&$jalan, &$tahunAktif) {
+                $tahun = (int) Carbon::parse($tgl)->year;
+                if ($tahunAktif !== $tahun) {
+                    $tahunAktif = $tahun;
+                    $jalan = 0.0;
+                }
+
                 $jalan += (float) $v;
 
                 return $jalan;
             });
         }
+
+        $harian = collect($harian)->filter(
+            fn ($nilai, $tgl) => $periode->contains(Carbon::parse($tgl)->format('Y-m')),
+        );
 
         return [
             'tahun' => $posisi->year,
@@ -224,7 +249,7 @@ abstract class MerchantService
             'label' => $entri['label'],
             'rupiah' => $entri['rupiah'],
             'flow' => $entri['flow'],
-            'seri' => $this->perBulan(collect($harian), $entri['rupiah']),
+            'seri' => $this->perBulan($harian, $entri['rupiah']),
         ];
     }
 
@@ -242,18 +267,27 @@ abstract class MerchantService
         $perUker = $cabangId !== null;
         $kolom = $perUker ? 'uker_id' : 'cabang_id';
 
-        $query = $this->dasar($areaId, $cabangId, $ukerId)->where('kpi', $entri['kode']);
+        $referensi = [
+            'dtd' => $this->tanggalTersedia($posisi->copy()->subDay(), $areaId, $cabangId, $ukerId),
+            'mtd' => $this->tanggalTersedia($posisi->copy()->subMonthNoOverflow()->endOfMonth(), $areaId, $cabangId, $ukerId),
+            'ytd' => $this->tanggalTersedia($posisi->copy()->subYear()->endOfYear(), $areaId, $cabangId, $ukerId),
+            'yoy' => $this->tanggalTersedia($posisi->copy()->subYear(), $areaId, $cabangId, $ukerId),
+        ];
 
-        if ($entri['flow']) {
-            $query->whereBetween('tanggal', [$posisi->copy()->startOfYear()->toDateString(), $posisi->toDateString()]);
-        } else {
-            $query->where('tanggal', $posisi->toDateString());
-        }
+        $aktual = $this->nilaiPerEntitas(
+            $entri,
+            $posisi->toDateString(),
+            $kolom,
+            $areaId,
+            $cabangId,
+            $ukerId,
+        );
 
-        $aktual = $query
-            ->groupBy($kolom)
-            ->selectRaw("{$kolom} as entitas_id, SUM(actual) as total")
-            ->pluck('total', 'entitas_id');
+        $pembanding = collect($referensi)->mapWithKeys(fn (?string $tgl, string $key) => [
+            $key => $tgl === null
+                ? collect()
+                : $this->nilaiPerEntitas($entri, $tgl, $kolom, $areaId, $cabangId, $ukerId),
+        ]);
 
         $target = collect();
 
@@ -275,11 +309,10 @@ abstract class MerchantService
             ? Uker::query()->whereIn('id', $aktual->keys())->pluck('nama', 'id')
             : Cabang::query()->whereIn('id', $aktual->keys())->pluck('nama', 'id');
 
-        $baris = $aktual->map(function ($total, $entitasId) use ($target, $nama, $rupiah, $punyaTarget) {
+        $baris = $aktual->map(function ($total, $entitasId) use ($target, $nama, $rupiah, $punyaTarget, $pembanding) {
             $nilai = (float) $total;
             $rka = (float) ($target[$entitasId] ?? 0);
-
-            return [
+            $hasil = [
                 'id' => (int) $entitasId,
                 'nama' => $nama[$entitasId] ?? (string) $entitasId,
                 'nilai' => $this->tampil($nilai, $rupiah),
@@ -287,17 +320,58 @@ abstract class MerchantService
                 'pencapaian' => ($punyaTarget && $rka > 0) ? round($nilai / $rka * 100, 2) : null,
                 'gap' => $punyaTarget ? $this->tampil($nilai - $rka, $rupiah) : null,
             ];
+
+            foreach (['dtd', 'mtd', 'ytd', 'yoy'] as $key) {
+                $ref = $pembanding[$key] ?? collect();
+                $hasil[$key] = $ref->has($entitasId)
+                    ? $this->tampil($nilai - (float) $ref[$entitasId], $rupiah)
+                    : null;
+            }
+
+            return $hasil;
         })->values()->sortByDesc('nilai')->values()->all();
 
         return [
             'tanggal' => $posisi->toDateString(),
+            'tanggal_referensi' => $referensi,
             'kpi' => $entri['kode'],
+            'label' => $entri['label'],
             'rupiah' => $rupiah,
             'inverse' => $entri['inverse'],
             'punya_target' => $punyaTarget,
             'grouping' => $perUker ? 'uker' : 'cabang',
             'baris' => $baris,
         ];
+    }
+
+    /**
+     * Nilai KPI per cabang/uker pada satu tanggal. KPI flow dijumlahkan YTD,
+     * sedangkan KPI stok memakai nilai tepat pada tanggal posisi.
+     *
+     * @return Collection<int, float>
+     */
+    private function nilaiPerEntitas(
+        array $entri,
+        string $tanggal,
+        string $kolom,
+        ?int $areaId,
+        ?int $cabangId,
+        ?int $ukerId,
+    ): Collection {
+        $query = $this->dasar($areaId, $cabangId, $ukerId)->where('kpi', $entri['kode']);
+        $posisi = Carbon::parse($tanggal);
+
+        if ($entri['flow']) {
+            $query->whereBetween('tanggal', [$posisi->copy()->startOfYear()->toDateString(), $posisi->toDateString()]);
+        } else {
+            $query->where('tanggal', $posisi->toDateString());
+        }
+
+        return $query
+            ->groupBy($kolom)
+            ->selectRaw("{$kolom} as entitas_id, SUM(actual) as total")
+            ->pluck('total', 'entitas_id')
+            ->map(fn ($nilai) => (float) $nilai);
     }
 
     // ---------------------------------------------------------------------
@@ -490,16 +564,23 @@ abstract class MerchantService
     {
         return $harian
             ->mapWithKeys(fn ($total, $tgl) => [Carbon::parse($tgl)->toDateString() => $total])
-            ->groupBy(fn ($total, string $tgl) => (int) Carbon::parse($tgl)->month, preserveKeys: true)
-            ->map(fn (Collection $bulanan, int $bulan) => [
-                'bulan' => $bulan,
-                'nama' => self::NAMA_BULAN[$bulan],
-                'titik' => $bulanan->map(fn ($total, string $tgl) => [
-                    'tanggal' => $tgl,
-                    'hari' => (int) Carbon::parse($tgl)->day,
-                    'nilai' => $rupiah ? Satuan::toJuta($total) : (float) $total,
-                ])->values()->all(),
-            ])
+            ->groupBy(fn ($total, string $tgl) => Carbon::parse($tgl)->format('Y-m'), preserveKeys: true)
+            ->map(function (Collection $bulanan, string $periode) use ($rupiah) {
+                $tanggal = Carbon::createFromFormat('Y-m-d', $periode.'-01');
+                $bulan = (int) $tanggal->month;
+
+                return [
+                    'periode' => $periode,
+                    'tahun' => (int) $tanggal->year,
+                    'bulan' => $bulan,
+                    'nama' => self::NAMA_BULAN[$bulan],
+                    'titik' => $bulanan->map(fn ($total, string $tgl) => [
+                        'tanggal' => $tgl,
+                        'hari' => (int) Carbon::parse($tgl)->day,
+                        'nilai' => $rupiah ? Satuan::toJuta($total) : (float) $total,
+                    ])->values()->all(),
+                ];
+            })
             ->sortKeys()
             ->values()
             ->all();

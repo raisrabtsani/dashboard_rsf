@@ -3,88 +3,135 @@ import { formatAngka, formatDelta, formatPct } from '@/utils/formatAngka';
 import { deltaCls, pctClsArah } from '@/utils/pencapaian';
 import { computed } from 'vue';
 
-/**
- * SATU komponen tabel detail per cabang untuk PRESENT — dipakai DPK, Pinjaman,
- * SML, dan NPL. JANGAN membuat varian per metrik; perbedaan arah pencapaian
- * (SML/NPL makin kecil makin baik) ditangani lewat prop `inverse`.
- */
 const props = defineProps({
     judul: { type: String, required: true },
-    /** [{ id, nama, nilai, target, pencapaian, gap }] */
     baris: { type: Array, default: () => [] },
+    kolom: { type: Array, default: () => [] },
     tanggal: { type: String, default: null },
-    /** Makin kecil makin baik (SML/NPL) — mempengaruhi warna pencapaian & gap. */
     inverse: { type: Boolean, default: false },
-});
-
-const jml = (kunci) => props.baris.reduce((t, b) => t + (Number(b[kunci]) || 0), 0);
-
-const total = computed(() => {
-    if (!props.baris.length) return null;
-
-    const nilai = jml('nilai');
-    const target = jml('target');
-
-    return {
-        nilai,
-        target,
-        gap: nilai - target,
-        pencapaian: target > 0 ? Math.round((nilai / target) * 10000) / 100 : null,
-    };
 });
 
 const NAMA_BULAN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
 const tanggalLabel = computed(() => {
     const m = props.tanggal && /^(\d{4})-(\d{2})-(\d{2})$/.exec(props.tanggal);
-
     return m ? `${Number(m[3])} ${NAMA_BULAN[Number(m[2]) - 1]} ${m[1]}` : props.tanggal;
 });
+
+const headerAtas = computed(() => {
+    const hasil = [];
+    let i = 0;
+    while (i < props.kolom.length) {
+        const kolom = props.kolom[i];
+        if (kolom.group) {
+            let colspan = 1;
+            while (i + colspan < props.kolom.length && props.kolom[i + colspan].group === kolom.group) colspan += 1;
+            hasil.push({ label: kolom.group, colspan, rowspan: 1, sub: true });
+            i += colspan;
+            continue;
+        }
+
+        hasil.push({ label: kolom.label, colspan: 1, rowspan: 2, sub: false, key: kolom.key });
+        i += 1;
+    }
+    return hasil;
+});
+
+const headerBawah = computed(() => props.kolom.filter((k) => !!k.group));
+const colspanPenuh = computed(() => 1 + props.kolom.length);
+
+function formatDeltaPct(value) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
+    const angka = Number(value);
+    return `${angka > 0 ? '+' : angka < 0 ? '-' : ''}${Math.abs(angka).toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+}
+
+function formatAktif(row, kolom) {
+    if (row?.row_mode === 'ratio') {
+        if (kolom.format === 'number') return 'pct';
+        if (kolom.format === 'delta') return 'deltaPct';
+    }
+    return kolom.format;
+}
+
+function formatCell(value, format) {
+    if (format === 'pct') return formatPct(value);
+    if (format === 'delta') return formatDelta(value);
+    if (format === 'deltaPct') return formatDeltaPct(value);
+    return formatAngka(value);
+}
+
+function cellClass(value, format, row, kolom) {
+    // Pada baris % CASA, nilai Actual dan RKA dibuat netral.
+    // Penc RKA serta delta DTD/MTD/YTD/YOY tetap memakai warna indikator.
+    const kolomIndikator = ['penc', 'dtd', 'mtd', 'ytd', 'yoy'];
+    if (
+        props.judul === 'Detail Dana Pihak Ketiga'
+        && row?.row_mode === 'ratio'
+        && !kolomIndikator.includes(kolom?.key)
+    ) {
+        return 'text-slate-700';
+    }
+
+    if (format === 'pct') return pctClsArah(value, props.inverse);
+    if (format === 'delta' || format === 'deltaPct') return deltaCls(value, props.inverse);
+    return 'text-slate-700';
+}
 </script>
 
 <template>
-    <div class="rounded-xl bg-white shadow-sm ring-1 ring-gray-100">
-        <div class="flex flex-wrap items-baseline justify-between gap-2 border-b border-gray-100 p-4">
-            <h3 class="text-sm font-semibold text-gray-700">{{ judul }}</h3>
-            <span v-if="tanggalLabel" class="text-[11px] text-gray-400">posisi {{ tanggalLabel }}</span>
-        </div>
+    <section class="overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.07)]">
+        <header class="flex flex-wrap items-center justify-between gap-2 bg-gradient-to-r from-[#0756bd] to-[#1676d6] px-4 py-3 text-white">
+            <div>
+                <p class="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/65">Detail Kinerja</p>
+                <h3 class="mt-0.5 text-sm font-extrabold uppercase tracking-wide">{{ judul }}</h3>
+            </div>
+            <span v-if="tanggalLabel" class="rounded-lg bg-white/15 px-2.5 py-1 text-[10px] font-semibold">Posisi {{ tanggalLabel }}</span>
+        </header>
 
         <div class="overflow-x-auto">
-            <table class="table-data">
+            <table class="min-w-full border-collapse text-[11px]">
                 <thead>
-                    <tr>
-                        <th class="text-left">Cabang</th>
-                        <th class="text-right">Nilai</th>
-                        <th class="text-right">RKA</th>
-                        <th class="text-right">Gap</th>
-                        <th class="text-right">Pencapaian</th>
+                    <tr class="bg-[#0b5fc8] text-white">
+                        <th rowspan="2" class="min-w-[240px] border-b border-white/10 px-4 py-2 text-left font-extrabold uppercase tracking-wide">Mata Anggaran</th>
+                        <template v-for="(h, idx) in headerAtas" :key="`top-${idx}-${h.label}`">
+                            <th v-if="h.sub" :colspan="h.colspan" class="border-b border-white/10 px-3 py-2 text-center font-extrabold">{{ h.label }}</th>
+                            <th v-else :rowspan="2" class="min-w-[92px] border-b border-white/10 px-3 py-2 text-center font-extrabold">{{ h.label }}</th>
+                        </template>
+                    </tr>
+                    <tr class="bg-[#dfeeff] text-[#0756bd]">
+                        <th
+                            v-for="k in headerBawah"
+                            :key="`sub-${k.key}`"
+                            class="min-w-[92px] border-b border-slate-200 px-3 py-2 text-center font-extrabold"
+                        >
+                            {{ k.label }}
+                        </th>
                     </tr>
                 </thead>
-                <tbody>
-                    <tr v-for="b in baris" :key="b.id" class="hover:bg-gray-50">
-                        <td class="text-gray-800">{{ b.nama }}</td>
-                        <td class="text-right tabular-nums">{{ formatAngka(b.nilai) }}</td>
-                        <td class="text-right tabular-nums text-gray-500">{{ formatAngka(b.target) }}</td>
-                        <td class="text-right tabular-nums" :class="deltaCls(b.gap, inverse)">{{ formatDelta(b.gap) }}</td>
-                        <td class="text-right font-semibold tabular-nums" :class="pctClsArah(b.pencapaian, inverse)">
-                            {{ formatPct(b.pencapaian) }}
-                        </td>
-                    </tr>
-                    <tr v-if="!baris.length">
-                        <td colspan="5" class="py-6 text-center text-gray-400">Tidak ada data.</td>
+                <tbody class="divide-y divide-slate-100">
+                    <template v-if="baris.length">
+                        <template v-for="(b, index) in baris" :key="`${b.label}-${index}`">
+                            <tr v-if="b.kind === 'group'" class="bg-[#eef6ff]">
+                                <td :colspan="colspanPenuh" class="px-4 py-2 font-extrabold text-[#0b5fc8]">{{ b.label }}</td>
+                            </tr>
+                            <tr v-else class="transition hover:bg-blue-50/60">
+                                <td class="px-4 py-2 font-semibold text-slate-700">{{ b.label }}</td>
+                                <td
+                                    v-for="k in kolom"
+                                    :key="`${b.label}-${k.key}`"
+                                    class="px-3 py-2 text-right font-semibold tabular-nums"
+                                    :class="cellClass(b[k.key], formatAktif(b, k), b, k)"
+                                >
+                                    {{ formatCell(b[k.key], formatAktif(b, k)) }}
+                                </td>
+                            </tr>
+                        </template>
+                    </template>
+                    <tr v-else>
+                        <td :colspan="colspanPenuh" class="px-4 py-10 text-center text-slate-400">Tidak ada data pada tanggal posisi ini.</td>
                     </tr>
                 </tbody>
-                <tfoot v-if="total" class="border-t-2 border-gray-200 bg-gray-50 font-semibold">
-                    <tr>
-                        <td class="text-gray-700">Total Region</td>
-                        <td class="text-right tabular-nums">{{ formatAngka(total.nilai) }}</td>
-                        <td class="text-right tabular-nums text-gray-500">{{ formatAngka(total.target) }}</td>
-                        <td class="text-right tabular-nums" :class="deltaCls(total.gap, inverse)">{{ formatDelta(total.gap) }}</td>
-                        <td class="text-right tabular-nums" :class="pctClsArah(total.pencapaian, inverse)">
-                            {{ formatPct(total.pencapaian) }}
-                        </td>
-                    </tr>
-                </tfoot>
             </table>
         </div>
-    </div>
+    </section>
 </template>

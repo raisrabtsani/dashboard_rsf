@@ -1,77 +1,117 @@
 <script setup>
-import ApplyButton from '@/Components/ApplyButton.vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import ComboChart from '@/Components/ComboChart.vue';
-import KpiCard from '@/Components/KpiCard.vue';
 import LoadingOverlay from '@/Components/LoadingOverlay.vue';
+import SortArrow from '@/Components/SortArrow.vue';
 import { Head } from '@inertiajs/vue3';
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import {
+    fetchBranchPencapaian,
     fetchCabang,
     fetchChart,
     fetchFilterOptions,
     fetchSnapshot,
     fetchUker,
 } from '@/services/recoveryPhApi';
+import { formatAngka, formatDelta, formatDeltaPct } from '@/utils/formatAngka';
+import { deltaCls } from '@/utils/pencapaian';
 import { useScope } from '@/utils/scope';
+import { useTableSort } from '@/utils/useTableSort';
 
 const props = defineProps({
     periodeAwal: { type: String, required: true },
-    modeAwal: { type: String, default: 'ph' },
-    scope: { type: Array, required: true },
+    modeAwal: { type: String, required: true },
+    scope: { type: Array, default: () => [] },
 });
 
 const scopeAkses = useScope();
-
-const MODE = [
-    { key: 'ph', label: 'PH', judul: 'Pinjaman Hapus Buku' },
-    { key: 'netdg', label: 'NET DG', judul: 'Net Downgrade' },
-];
-
-/** Toggle mode berlaku LANGSUNG (seperti Merchant), tidak menunggu Terapkan. */
-const mode = ref(props.modeAwal);
-
+const mode = ref(props.modeAwal ?? 'ph');
 const pending = reactive({
+    periode: props.periodeAwal.slice(0, 7),
     area_id: null,
     cabang_id: null,
     uker_id: null,
-    periode: props.periodeAwal,
 });
-
 const applied = reactive({ ...pending });
-
 const dirty = computed(() =>
-    Object.keys(applied).some((k) => (pending[k] ?? null) !== (applied[k] ?? null)),
+    Object.keys(applied).some((key) => (pending[key] ?? null) !== (applied[key] ?? null)),
 );
 
 const opsi = reactive({ area: [], cabang: [], uker: [] });
 const snapshot = ref(null);
 const chart = ref(null);
-const memuat = reactive({ kartu: false, chart: false });
+const branch = ref({ grouping: 'cabang', baris: [], periode_lalu: null, desember_lalu: null, periode: null });
+const drilldown = ref(null);
+const scopeTabel = ref('total');
+const memuat = reactive({ kartu: false, chart: false, tabel: false });
+const sort = useTableSort('nilai', 'desc');
 
-const modeAktif = computed(() => MODE.find((m) => m.key === mode.value) ?? MODE[0]);
-
-// PH & Net DG TIDAK punya RKA — kartu dirender tanpa blok target/pencapaian/gap.
-const LABEL_DELTA = [
-    { key: 'mom', label: 'MoM' },
-    { key: 'yoy', label: 'YoY' },
+const TOGGLE = [
+    { key: 'ph', label: 'PH' },
+    { key: 'netdg', label: 'NET DG' },
 ];
 
-const kartu = computed(() => snapshot.value?.kartu ?? []);
+const SECTION_ORDER = ['total', 'micro', 'sme', 'consumer'];
+const NAMA_BULAN = [
+    'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+    'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
+];
 
-const seriUntuk = (key) => chart.value?.seri?.[key] ?? null;
+const kartuUrut = computed(() => {
+    const semua = snapshot.value?.kartu ?? [];
+    const peta = Object.fromEntries(semua.map((item) => [String(item.key).toLowerCase(), item]));
+
+    return SECTION_ORDER.map((key) => peta[key]).filter(Boolean);
+});
+
+const barisTerurut = computed(() => sort.urutkan(branch.value.baris ?? []));
+
+const judulHalaman = computed(() => 'PH & NET DG');
+const judulTabel = computed(() => `KINERJA ${mode.value === 'ph' ? 'PH' : 'NET DG'} ${branch.value.grouping === 'uker' ? 'UNIT KERJA' : 'PER CABANG'}`);
+const scopeTabelOptions = [
+    { key: 'total', label: 'Semua Segmen' },
+    { key: 'micro', label: 'PH Mikro' },
+    { key: 'sme', label: 'PH SME' },
+    { key: 'consumer', label: 'PH Consumer' },
+];
+
+function periodeUntukApi(nilai) {
+    if (!nilai) return null;
+    const [tahun, bulan] = nilai.split('-').map(Number);
+    return new Date(tahun, bulan, 0).toISOString().slice(0, 10);
+}
+
+function bulanTahunPanjang(periode) {
+    const m = /^(\d{4})-(\d{2})/.exec(periode ?? '');
+    return m ? `${NAMA_BULAN[Number(m[2]) - 1]} ${m[1]}` : '—';
+}
+
+function bulanPendek(periode) {
+    const m = /^(\d{4})-(\d{2})/.exec(periode ?? '');
+    return m ? `${NAMA_BULAN[Number(m[2]) - 1].slice(0, 3).toUpperCase()} ${m[1].slice(2)}` : '—';
+}
+
+function chartUntuk(key) {
+    return chart.value?.seri?.[key] ?? null;
+}
 
 async function muatOpsi() {
-    const data = await fetchFilterOptions({ area_id: applied.area_id, cabang_id: applied.cabang_id });
+    const data = await fetchFilterOptions({ area_id: applied.area_id, cabang_id: applied.cabang_id, mode: mode.value });
     opsi.area = data.area ?? [];
     opsi.cabang = data.cabang ?? [];
     opsi.uker = data.uker ?? [];
 }
 
-async function muatKartu() {
+async function muatSnapshot() {
     memuat.kartu = true;
     try {
-        snapshot.value = await fetchSnapshot({ ...applied, mode: mode.value });
+        snapshot.value = await fetchSnapshot({
+            mode: mode.value,
+            periode: periodeUntukApi(applied.periode),
+            area_id: applied.area_id,
+            cabang_id: applied.cabang_id,
+            uker_id: applied.uker_id,
+        });
     } finally {
         memuat.kartu = false;
     }
@@ -80,31 +120,67 @@ async function muatKartu() {
 async function muatChart() {
     memuat.chart = true;
     try {
-        chart.value = await fetchChart({ ...applied, mode: mode.value });
+        chart.value = await fetchChart({
+            mode: mode.value,
+            periode: periodeUntukApi(applied.periode),
+            area_id: applied.area_id,
+            cabang_id: applied.cabang_id,
+            uker_id: applied.uker_id,
+        });
     } finally {
         memuat.chart = false;
     }
 }
 
-const muatSemua = () => Promise.all([muatKartu(), muatChart()]);
+async function muatTabel() {
+    if (!scopeAkses.bolehLihatRanking.value) {
+        branch.value = { grouping: 'cabang', baris: [], periode_lalu: null, desember_lalu: null, periode: null };
+        return;
+    }
+
+    memuat.tabel = true;
+    try {
+        branch.value = await fetchBranchPencapaian({
+            mode: mode.value,
+            periode: periodeUntukApi(applied.periode),
+            area_id: applied.area_id,
+            cabang_id: drilldown.value ?? applied.cabang_id,
+            uker_id: applied.uker_id,
+            scope: scopeTabel.value,
+        });
+    } finally {
+        memuat.tabel = false;
+    }
+}
+
+function muatSemua() {
+    return Promise.all([muatSnapshot(), muatChart(), muatTabel()]);
+}
 
 function terapkan() {
     Object.assign(applied, pending);
+    drilldown.value = null;
     muatSemua();
 }
 
-watch(mode, () => muatSemua());
+async function gantiMode(key) {
+    if (mode.value === key) return;
+    mode.value = key;
+    await muatOpsi();
+    await muatSemua();
+}
 
+watch(drilldown, () => muatTabel());
+watch(scopeTabel, () => muatTabel());
 watch(
     () => pending.area_id,
     async (areaId) => {
         pending.cabang_id = null;
         pending.uker_id = null;
         opsi.uker = [];
-        opsi.cabang = areaId ? await fetchCabang(areaId) : (await fetchFilterOptions({})).cabang;
+        opsi.cabang = areaId ? await fetchCabang(areaId) : (await fetchFilterOptions({ mode: mode.value })).cabang;
     },
 );
-
 watch(
     () => pending.cabang_id,
     async (cabangId) => {
@@ -120,131 +196,192 @@ onMounted(async () => {
 </script>
 
 <template>
-    <Head title="Recovery EC & PH" />
+    <Head title="PH & Net DG" />
 
     <AuthenticatedLayout>
-        <template #header>
-            <h2 class="text-xl font-semibold leading-tight text-gray-800">
-                {{ modeAktif.judul }}
-            </h2>
-        </template>
-
-        <div class="py-8">
-            <div class="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
-                <!-- Toggle PH | NET DG -->
-                <div class="flex flex-wrap items-center justify-between gap-3">
-                    <div class="inline-flex rounded-lg bg-gray-100 p-1">
+        <div class="py-6">
+            <div class="mx-auto max-w-7xl space-y-5 px-4 sm:px-6 lg:px-8">
+                <div class="flex flex-wrap items-center justify-between gap-4">
+                    <h1 class="text-[34px] font-extrabold tracking-tight text-[#0857C3]">{{ judulHalaman }}</h1>
+                    <div class="inline-flex rounded-2xl bg-white p-1.5 shadow-sm ring-1 ring-black/5">
                         <button
-                            v-for="m in MODE"
-                            :key="m.key"
+                            v-for="item in TOGGLE"
+                            :key="item.key"
                             type="button"
-                            class="rounded-md px-4 py-1.5 text-sm font-semibold transition"
-                            :class="
-                                mode === m.key
-                                    ? 'bg-white text-brand-700 shadow'
-                                    : 'text-gray-500 hover:text-gray-700'
-                            "
-                            @click="mode = m.key"
+                            class="min-w-[120px] rounded-xl px-5 py-3 text-lg font-extrabold transition"
+                            :class="mode === item.key ? 'bg-[#0857C3] text-white shadow' : 'text-slate-400'"
+                            @click="gantiMode(item.key)"
                         >
-                            {{ m.label }}
+                            {{ item.label }}
                         </button>
                     </div>
-
-                    <p class="text-xs text-gray-500">
-                        Domain ini tidak punya RKA — tidak ada pencapaian maupun gap.
-                    </p>
                 </div>
 
-                <!-- Filter bar -->
-                <div class="rounded-lg bg-white p-4 shadow ring-1 ring-gray-100">
-                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                        <label v-if="scopeAkses.bolehPilihArea.value" class="block">
-                            <span class="text-xs font-medium text-gray-500">Area</span>
-                            <select v-model="pending.area_id" class="mt-1 block w-full rounded-md border-gray-300 text-sm">
+                <div class="rounded-2xl bg-white px-4 py-4 shadow-sm ring-1 ring-black/5">
+                    <div class="grid grid-cols-1 gap-3 lg:grid-cols-12">
+                        <label class="lg:col-span-2">
+                            <span class="text-[11px] font-bold uppercase tracking-wide text-slate-500">Periode</span>
+                            <input v-model="pending.periode" type="month" class="mt-1 h-12 w-full rounded-xl border-slate-200 text-sm" />
+                        </label>
+                        <label v-if="scopeAkses.bolehPilihArea.value" class="lg:col-span-2">
+                            <span class="text-[11px] font-bold uppercase tracking-wide text-slate-500">Area</span>
+                            <select v-model="pending.area_id" class="mt-1 h-12 w-full rounded-xl border-slate-200 text-sm">
                                 <option :value="null">Semua Area</option>
                                 <option v-for="a in opsi.area" :key="a.id" :value="a.id">{{ a.nama }}</option>
                             </select>
                         </label>
-
-                        <label v-if="scopeAkses.bolehPilihCabang.value" class="block">
-                            <span class="text-xs font-medium text-gray-500">Cabang (BO)</span>
-                            <select v-model="pending.cabang_id" class="mt-1 block w-full rounded-md border-gray-300 text-sm">
+                        <label v-if="scopeAkses.bolehPilihCabang.value" class="lg:col-span-3">
+                            <span class="text-[11px] font-bold uppercase tracking-wide text-slate-500">Cabang</span>
+                            <select v-model="pending.cabang_id" class="mt-1 h-12 w-full rounded-xl border-slate-200 text-sm">
                                 <option :value="null">Semua Cabang</option>
                                 <option v-for="c in opsi.cabang" :key="c.id" :value="c.id">{{ c.nama }}</option>
                             </select>
                         </label>
-
-                        <label v-if="scopeAkses.bolehPilihUker.value" class="block">
-                            <span class="text-xs font-medium text-gray-500">Unit Kerja</span>
-                            <select v-model="pending.uker_id" class="mt-1 block w-full rounded-md border-gray-300 text-sm">
+                        <label v-if="scopeAkses.bolehPilihUker.value" class="lg:col-span-3">
+                            <span class="text-[11px] font-bold uppercase tracking-wide text-slate-500">Unit Kerja</span>
+                            <select v-model="pending.uker_id" class="mt-1 h-12 w-full rounded-xl border-slate-200 text-sm">
                                 <option :value="null">Semua Uker</option>
                                 <option v-for="u in opsi.uker" :key="u.id" :value="u.id">{{ u.nama }}</option>
                             </select>
                         </label>
-
-                        <label class="block">
-                            <span class="text-xs font-medium text-gray-500">Periode (bulan posisi)</span>
-                            <input v-model="pending.periode" type="date" class="mt-1 block w-full rounded-md border-gray-300 text-sm" />
-                        </label>
-
-                        <div class="flex items-end">
-                            <ApplyButton :dirty="dirty" :loading="memuat.kartu || memuat.chart" @click="terapkan" />
+                        <div class="flex items-end lg:col-span-2">
+                            <button
+                                type="button"
+                                class="h-12 w-full rounded-xl bg-[#0857C3] px-4 text-sm font-bold text-white shadow-sm transition hover:bg-[#0648a4]"
+                                :disabled="memuat.kartu || memuat.chart || memuat.tabel"
+                                @click="terapkan"
+                            >
+                                Terapkan
+                            </button>
                         </div>
                     </div>
-
-                    <p v-if="dirty" class="mt-2 text-xs text-amber-600">
-                        Ada perubahan filter yang belum diterapkan.
-                    </p>
+                    <p v-if="dirty" class="mt-3 text-xs text-amber-600">Ada perubahan filter yang belum diterapkan.</p>
                 </div>
 
-                <!-- Peringatan data -->
-                <div
-                    v-if="snapshot?.ph_kosong"
-                    class="rounded-md bg-amber-50 p-4 text-sm text-amber-800 ring-1 ring-amber-200"
-                >
-                    Belum ada data PH untuk tahun {{ snapshot.tahun }}. Net DG dihitung tanpa
-                    komponen hapus buku, sehingga nilainya kemungkinan understated.
+                <div v-if="snapshot?.ph_kosong" class="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                    Data PH tahun berjalan belum tersedia lengkap. Perhitungan Net DG mengikuti data yang ada.
                 </div>
 
-                <!-- Kartu + chart per scope -->
-                <div
-                    v-for="s in kartu"
-                    :key="s.key"
-                    class="relative grid grid-cols-1 gap-4 rounded-lg bg-white p-4 shadow ring-1 ring-gray-100 lg:grid-cols-4"
-                >
+                <div class="relative space-y-5">
                     <LoadingOverlay :show="memuat.kartu || memuat.chart" />
 
-                    <div class="lg:col-span-1">
-                        <KpiCard
-                            :judul="`${modeAktif.label} — ${s.judul}`"
-                            :nilai="s.nilai"
-                            :delta="s.delta"
-                            :label-delta="LABEL_DELTA"
-                            :tampilkan-target="false"
-                            :inverse="true"
-                        />
-                        <p class="mt-2 px-1 text-[11px] text-gray-500">
-                            Akumulasi YTD:
-                            <strong class="tabular-nums">{{ s.akumulasi === null ? '–' : s.akumulasi.toLocaleString('id-ID', { maximumFractionDigits: 0 }) }} Jt</strong>
-                        </p>
-                    </div>
-
-                    <div class="lg:col-span-3">
-                        <div class="h-64">
-                            <ComboChart
-                                v-if="seriUntuk(s.key)"
-                                :labels="seriUntuk(s.key).label"
-                                :tahun-lalu="seriUntuk(s.key).tahun_lalu"
-                                :tahun-ini="seriUntuk(s.key).tahun_ini"
-                            />
-                            <p v-else class="pt-24 text-center text-sm text-gray-400">Tidak ada data.</p>
+                    <section v-for="card in kartuUrut" :key="card.key" class="space-y-3">
+                        <div class="text-sm font-extrabold uppercase tracking-wide text-[#0857C3]">
+                            {{ mode === 'ph' ? 'PH ' : 'NET DG ' }}{{ card.judul }}
                         </div>
-                    </div>
+
+                        <div class="overflow-hidden rounded-[22px] bg-gradient-to-r from-[#0857C3] to-[#2F8BFF] text-white shadow-lg">
+                            <div class="grid grid-cols-1 items-center gap-4 px-6 py-5 lg:grid-cols-[1fr_auto_auto]">
+                                <div>
+                                    <p class="text-xs font-bold uppercase tracking-[0.22em] text-white/75">{{ card.judul }}</p>
+                                    <p class="mt-1 text-5xl font-extrabold leading-none tracking-tight">{{ formatAngka(card.akumulasi) }}</p>
+                                    <p class="mt-2 text-sm text-white/80">Akumulasi s/d {{ bulanTahunPanjang(snapshot?.periode) }}</p>
+                                </div>
+                                <div class="rounded-2xl bg-white/10 px-5 py-4 text-right backdrop-blur">
+                                    <p class="text-[10px] font-bold uppercase tracking-widest text-white/70">MTD</p>
+                                    <p class="mt-1 text-3xl font-extrabold" :class="deltaCls(card.delta?.mom?.nilai)">{{ formatDelta(card.delta?.mom?.nilai) }}</p>
+                                    <p class="text-sm" :class="deltaCls(card.delta?.mom?.nilai)">{{ formatDeltaPct(card.delta?.mom?.persen) }}</p>
+                                </div>
+                                <div class="rounded-2xl bg-white/10 px-5 py-4 text-right backdrop-blur">
+                                    <p class="text-[10px] font-bold uppercase tracking-widest text-white/70">YOY</p>
+                                    <p class="mt-1 text-3xl font-extrabold" :class="deltaCls(card.delta?.yoy?.nilai)">{{ formatDelta(card.delta?.yoy?.nilai) }}</p>
+                                    <p class="text-sm" :class="deltaCls(card.delta?.yoy?.nilai)">{{ formatDeltaPct(card.delta?.yoy?.persen) }}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="rounded-[22px] bg-white p-4 shadow-sm ring-1 ring-black/5">
+                            <div class="mb-3 flex items-center justify-between gap-3">
+                                <div>
+                                    <p class="text-sm font-bold uppercase tracking-wide text-slate-700">{{ mode === 'ph' ? 'Total ' : '' }}{{ card.judul }}</p>
+                                    <p class="mt-1 text-xs text-slate-400">Perbandingan {{ chartUntuk(String(card.key).toLowerCase())?.tahun_lalu?.tahun }} vs {{ chartUntuk(String(card.key).toLowerCase())?.tahun_ini?.tahun }}</p>
+                                </div>
+                                <div class="text-xs text-slate-400">Periode {{ bulanTahunPanjang(snapshot?.periode) }}</div>
+                            </div>
+                            <div class="h-[360px]">
+                                <ComboChart
+                                    v-if="chartUntuk(String(card.key).toLowerCase())"
+                                    :labels="chartUntuk(String(card.key).toLowerCase())?.label ?? []"
+                                    :tahun-lalu="chartUntuk(String(card.key).toLowerCase())?.tahun_lalu"
+                                    :tahun-ini="chartUntuk(String(card.key).toLowerCase())?.tahun_ini"
+                                />
+                                <p v-else class="pt-24 text-center text-sm text-slate-400">Tidak ada data.</p>
+                            </div>
+                        </div>
+                    </section>
                 </div>
 
-                <p v-if="!kartu.length && !memuat.kartu" class="rounded-lg bg-white p-6 text-center text-sm text-gray-400 shadow">
-                    Tidak ada data untuk filter ini.
-                </p>
+                <div v-if="scopeAkses.bolehLihatRanking.value" class="relative overflow-hidden rounded-[22px] bg-white shadow-sm ring-1 ring-black/5">
+                    <LoadingOverlay :show="memuat.tabel" />
+
+                    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+                        <div>
+                            <h3 class="text-sm font-extrabold uppercase tracking-wide text-slate-700">{{ judulTabel }}</h3>
+                            <p class="mt-1 text-xs text-slate-400">Posisi {{ bulanTahunPanjang(branch?.periode) }}</p>
+                        </div>
+
+                        <div class="flex flex-wrap items-center gap-2">
+                            <select v-model="drilldown" class="h-10 rounded-xl border-slate-200 text-sm">
+                                <option :value="null">Semua BO</option>
+                                <option v-for="c in opsi.cabang" :key="c.id" :value="c.id">{{ c.nama }}</option>
+                            </select>
+                            <select v-model="scopeTabel" class="h-10 rounded-xl border-slate-200 text-sm">
+                                <option v-for="opt in scopeTabelOptions" :key="opt.key" :value="opt.key">{{ opt.label }}</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full text-sm">
+                            <thead class="bg-slate-50/80 text-slate-500">
+                                <tr>
+                                    <th class="px-4 py-3 text-center text-[11px] font-bold uppercase tracking-wider">#</th>
+                                    <th class="cursor-pointer px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider" @click="sort.urutkanKolom('nama')">
+                                        Nama Cabang
+                                        <SortArrow :arah="sort.arahUntuk('nama')" />
+                                    </th>
+                                    <th class="cursor-pointer px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wider" @click="sort.urutkanKolom('periode_lalu')">
+                                        {{ bulanPendek(branch?.periode_lalu) }}
+                                        <SortArrow :arah="sort.arahUntuk('periode_lalu')" />
+                                    </th>
+                                    <th class="cursor-pointer px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wider" @click="sort.urutkanKolom('desember_lalu')">
+                                        {{ bulanPendek(branch?.desember_lalu) }}
+                                        <SortArrow :arah="sort.arahUntuk('desember_lalu')" />
+                                    </th>
+                                    <th class="cursor-pointer px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wider" @click="sort.urutkanKolom('nilai')">
+                                        {{ bulanPendek(branch?.periode) }}
+                                        <SortArrow :arah="sort.arahUntuk('nilai')" />
+                                    </th>
+                                    <th class="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wider">MTD</th>
+                                    <th class="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wider">YOY</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="(row, index) in barisTerurut" :key="row.id" class="border-t border-slate-100 hover:bg-slate-50/60">
+                                    <td class="px-4 py-3 text-center text-slate-400">{{ index + 1 }}</td>
+                                    <td class="px-4 py-3">
+                                        <p class="font-semibold text-slate-800">{{ row.nama }}</p>
+                                        <p v-if="row.area_nama" class="text-xs text-slate-400">{{ row.area_nama }}</p>
+                                    </td>
+                                    <td class="px-4 py-3 text-right text-slate-500">{{ formatAngka(row.periode_lalu) }}</td>
+                                    <td class="px-4 py-3 text-right text-slate-500">{{ formatAngka(row.desember_lalu) }}</td>
+                                    <td class="px-4 py-3 text-right font-bold text-slate-800">{{ formatAngka(row.nilai) }}</td>
+                                    <td class="px-4 py-3 text-right">
+                                        <p class="font-semibold" :class="deltaCls(row.mtd?.nilai)">{{ formatDelta(row.mtd?.nilai) }}</p>
+                                        <p class="text-xs" :class="deltaCls(row.mtd?.nilai)">{{ formatDeltaPct(row.mtd?.persen) }}</p>
+                                    </td>
+                                    <td class="px-4 py-3 text-right">
+                                        <p class="font-semibold" :class="deltaCls(row.yoy?.nilai)">{{ formatDelta(row.yoy?.nilai) }}</p>
+                                        <p class="text-xs" :class="deltaCls(row.yoy?.nilai)">{{ formatDeltaPct(row.yoy?.persen) }}</p>
+                                    </td>
+                                </tr>
+                                <tr v-if="!barisTerurut.length">
+                                    <td colspan="7" class="px-4 py-8 text-center text-sm text-slate-400">Tidak ada data.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
     </AuthenticatedLayout>

@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Exceptions\ImportException;
 use App\Models\RkaLaba;
 use App\Models\Uker;
+use App\Services\Concerns\MelaporkanImport;
 use App\Support\Bulan;
 use App\Support\PetaKolom;
 use App\Support\Satuan;
@@ -17,27 +18,33 @@ use Illuminate\Support\Facades\DB;
  * Import target RKA Laba dari CSV/Excel — BULANAN, target KUMULATIF YTD.
  *
  * Format (long), nilai RUPIAH PENUH:
- *   id_cabang | id_uker | segmen | tahun | bulan | target
+ *   id_cabang | id_uker | uko | tahun | bulan | target
+ *
+ * `uko` (jenis kantor: Branch Office / Sub-Branch Office / Micro / Region Office)
+ * mengikuti format berkas AKTUAL Laba agar target tersegmentasi selaras dengan
+ * actual-nya. Nilainya disimpan apa adanya ke kolom DB `segmen`.
  *
  * Sama seperti RKA lain: nama kolom toleran, bulan boleh nama, target kosong
  * dilewati, dan di-UPSERT karena target boleh direvisi sepanjang tahun berjalan.
  */
 class RkaLabaCsvImportService
 {
+    use MelaporkanImport;
+
     /**
      * @var array<string, list<string>>
      */
     public const ALIAS = [
         'id_cabang' => ['cabang_id', 'kode_cabang', 'cabang'],
         'id_uker' => ['uker_id', 'kode_uker', 'uker'],
-        'segmen' => ['segment', 'segmentasi'],
+        'uko' => ['segmen', 'segment', 'segmentasi', 'jenis_kantor'],
         'tahun' => ['thn', 'year'],
         'bulan' => ['bln', 'month', 'periode'],
         'target' => ['rka', 'nilai', 'nominal'],
     ];
 
     /** @var list<string> */
-    public const KOLOM = ['id_cabang', 'id_uker', 'segmen', 'tahun', 'bulan', 'target'];
+    public const KOLOM = ['id_cabang', 'id_uker', 'uko', 'tahun', 'bulan', 'target'];
 
     /**
      * @return array{tahun: list<int>, baris: int, dilewati: int, total_target: float}
@@ -45,10 +52,6 @@ class RkaLabaCsvImportService
     public function impor(string $path, ?string $namaAsli = null): array
     {
         ['baris' => $baris, 'dilewati' => $dilewati] = $this->baca($path, $namaAsli ?? basename($path));
-
-        if ($baris->isEmpty()) {
-            throw ImportException::berkas('Tidak ada baris target yang bisa diimpor dari berkas ini.');
-        }
 
         DB::transaction(function () use ($baris) {
             $baris->chunk(1000)->each(fn (Collection $potongan) => RkaLaba::query()->upsert(
@@ -63,6 +66,7 @@ class RkaLabaCsvImportService
             'baris' => $baris->count(),
             'dilewati' => $dilewati,
             'total_target' => (float) $baris->sum(fn (array $b) => $b['target']),
+            'laporan' => $this->laporanImport(),
         ];
     }
 
@@ -103,19 +107,19 @@ class RkaLabaCsvImportService
         $now = Carbon::now();
         $dilewati = 0;
 
-        $hasil = $baris->map(function (array $r, int $i) use ($ukerValid, $now, &$dilewati) {
+        $hasil = $this->petakanBarisAman($baris, function (array $r, int $i) use ($ukerValid, $now, &$dilewati) {
             $nomor = $i + 2;
 
             $ukerId = (int) trim((string) $r['id_uker']);
-            $segmen = trim((string) $r['segmen']);
+            $uko = trim((string) $r['uko']);
             $tahun = (int) trim((string) $r['tahun']);
 
             if (! $ukerValid->has($ukerId)) {
                 throw ImportException::berkas("Baris {$nomor}: id_uker {$ukerId} tidak ada di master uker.");
             }
 
-            if ($segmen === '') {
-                throw ImportException::berkas("Baris {$nomor}: kolom segmen kosong.");
+            if ($uko === '') {
+                throw ImportException::berkas("Baris {$nomor}: kolom uko kosong.");
             }
 
             if ($tahun < 2000 || $tahun > 2100) {
@@ -131,14 +135,15 @@ class RkaLabaCsvImportService
             return [
                 'cabang_id' => $ukerValid[$ukerId],
                 'uker_id' => $ukerId,
-                'segmen' => $segmen,
+                // Label uko dari berkas disimpan ke kolom segmen (dimensi generik).
+                'segmen' => $uko,
                 'tahun' => $tahun,
                 'bulan' => Bulan::uraiAtauGagal((string) $r['bulan'], $nomor),
                 'target' => $this->angka($r['target'], $nomor),
                 'created_at' => $now,
                 'updated_at' => $now,
             ];
-        })->filter()->values();
+        });
 
         $this->tolakBarisKembar($hasil, $namaBerkas);
 
@@ -167,7 +172,7 @@ class RkaLabaCsvImportService
 
         if ($kembar->isNotEmpty()) {
             throw ImportException::berkas(sprintf(
-                '%s memuat %d kombinasi uker+segmen+tahun+bulan yang kembar, contoh: %s. '.
+                '%s memuat %d kombinasi uker+uko+tahun+bulan yang kembar, contoh: %s. '.
                 'Gabungkan dulu baris kembar tersebut.',
                 $namaBerkas,
                 $kembar->count(),

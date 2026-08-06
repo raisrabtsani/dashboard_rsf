@@ -26,7 +26,12 @@ use Illuminate\Database\Eloquent\Builder;
  *     Januari itu sendiri. Bila bulan N-1 tidak ada datanya, MTD = null (bukan 0).
  *
  * Kolom delta kartu: MTD, YTD (= nilai kartu itu sendiri), YoY (bulan sama tahun
- * lalu). TIDAK ada D-1. Rollup Region 855 dikecualikan, sama seperti Simpanan.
+ * lalu). TIDAK ada D-1.
+ *
+ * Rollup Region Office IKUT dihitung di kartu Total & chart (tampil sebagai
+ * segmen "Region Office" tersendiri) — berbeda dari Simpanan yang mengecualikannya.
+ * Hanya tabel "Kinerja Branch Office" yang tetap mengecualikan entitas rollup
+ * Region, karena itu peringkat antar-cabang, bukan rollup regional.
  */
 class LabaService
 {
@@ -160,21 +165,39 @@ class LabaService
      *
      * @return array<string, mixed>
      */
-    public function chart(int $tahun, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+    public function chart(int $tahun, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $segmen = null): array
     {
-        $kumulatif = $this->kumulatifPerBulan($tahun, $areaId, $cabangId, $ukerId);
+        $kumulatif = $this->kumulatifPerBulan($tahun, $areaId, $cabangId, $ukerId, $segmen);
+        $target = $this->targetKumulatifPerBulan($tahun, $areaId, $cabangId, $ukerId, $segmen);
+        $tahunLalu = $this->kumulatifPerBulan($tahun - 1, $areaId, $cabangId, $ukerId, $segmen);
 
-        $titik = collect($kumulatif)
-            ->map(fn (float $total, int $bulan) => [
+        $mtd = $this->mtdPerBulan($kumulatif);
+        $mtdTahunLalu = $this->mtdPerBulan($tahunLalu);
+
+        $bulanTersedia = collect(array_keys($kumulatif))
+            ->merge(array_keys($target))
+            ->merge(array_keys($tahunLalu))
+            ->unique()
+            ->sort()
+            ->values();
+
+        $titik = $bulanTersedia
+            ->map(fn (int $bulan) => [
                 'bulan' => $bulan,
                 'nama' => self::NAMA_BULAN[$bulan],
-                'nilai' => Satuan::toJuta($total),
+                'nilai' => array_key_exists($bulan, $kumulatif) ? Satuan::toJuta($kumulatif[$bulan]) : null,
+                'target' => array_key_exists($bulan, $target) ? Satuan::toJuta($target[$bulan]) : null,
+                'nilai_tahun_lalu' => array_key_exists($bulan, $tahunLalu) ? Satuan::toJuta($tahunLalu[$bulan]) : null,
+                'mtd' => array_key_exists($bulan, $mtd) ? Satuan::toJuta($mtd[$bulan]) : null,
+                'mtd_tahun_lalu' => array_key_exists($bulan, $mtdTahunLalu) ? Satuan::toJuta($mtdTahunLalu[$bulan]) : null,
             ])
-            ->sortKeys()
-            ->values()
             ->all();
 
-        return ['tahun' => $tahun, 'titik' => $titik];
+        return [
+            'tahun' => $tahun,
+            'segmen' => $segmen,
+            'titik' => $titik,
+        ];
     }
 
     /**
@@ -185,25 +208,26 @@ class LabaService
      *
      * @return array<string, mixed>
      */
-    public function chartMtd(int $tahun, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+    public function chartMtd(int $tahun, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $segmen = null): array
     {
-        $kumulatif = $this->kumulatifPerBulan($tahun, $areaId, $cabangId, $ukerId);
+        $kumulatif = $this->kumulatifPerBulan($tahun, $areaId, $cabangId, $ukerId, $segmen);
 
         if ($kumulatif === []) {
-            return ['tahun' => $tahun, 'titik' => []];
+            return ['tahun' => $tahun, 'segmen' => $segmen, 'titik' => []];
         }
 
+        $mtd = $this->mtdPerBulan($kumulatif);
         $titik = [];
 
         for ($bulan = 1; $bulan <= max(array_keys($kumulatif)); $bulan++) {
             $titik[] = [
                 'bulan' => $bulan,
                 'nama' => self::NAMA_BULAN[$bulan],
-                'nilai' => Satuan::toJuta($this->mtdDariKumulatif($kumulatif, $bulan)),
+                'nilai' => array_key_exists($bulan, $mtd) ? Satuan::toJuta($mtd[$bulan]) : null,
             ];
         }
 
-        return ['tahun' => $tahun, 'titik' => $titik];
+        return ['tahun' => $tahun, 'segmen' => $segmen, 'titik' => $titik];
     }
 
     /**
@@ -217,8 +241,29 @@ class LabaService
         $perUker = $cabangId !== null;
         $kolom = $perUker ? 'uker_id' : 'cabang_id';
 
-        $aktual = $this->dasar($areaId, $cabangId, $ukerId)
+        [$prevTahun, $prevBulan] = $bulan === 1 ? [$tahun - 1, 12] : [$tahun, $bulan - 1];
+
+        // Peringkat antar-cabang: rollup Region Office DIKECUALIKAN di sini
+        // (walau ikut di kartu Total). dasar() sudah termasuk Region, jadi
+        // disaring eksplisit per query.
+        $tanpaRegion = fn (Builder $q) => $q->where('cabang_id', '!=', self::EXCLUDED_REGION_ID);
+
+        $aktual = $tanpaRegion($this->dasar($areaId, $cabangId, $ukerId))
             ->where('tahun', $tahun)
+            ->where('bulan', $bulan)
+            ->groupBy($kolom)
+            ->selectRaw("{$kolom} as entitas_id, SUM(laba) as total")
+            ->pluck('total', 'entitas_id');
+
+        $bulanLalu = $tanpaRegion($this->dasar($areaId, $cabangId, $ukerId))
+            ->where('tahun', $prevTahun)
+            ->where('bulan', $prevBulan)
+            ->groupBy($kolom)
+            ->selectRaw("{$kolom} as entitas_id, SUM(laba) as total")
+            ->pluck('total', 'entitas_id');
+
+        $tahunLalu = $tanpaRegion($this->dasar($areaId, $cabangId, $ukerId))
+            ->where('tahun', $tahun - 1)
             ->where('bulan', $bulan)
             ->groupBy($kolom)
             ->selectRaw("{$kolom} as entitas_id, SUM(laba) as total")
@@ -236,23 +281,35 @@ class LabaService
             ->selectRaw("{$kolom} as entitas_id, SUM(target) as total")
             ->pluck('total', 'entitas_id');
 
-        $nama = $perUker
-            ? Uker::query()->whereIn('id', $aktual->keys())->pluck('nama', 'id')
-            : Cabang::query()->whereIn('id', $aktual->keys())->pluck('nama', 'id');
+        $ids = collect($aktual->keys())
+            ->merge($target->keys())
+            ->unique()
+            ->values();
 
-        $baris = $aktual->map(function ($total, $entitasId) use ($target, $nama) {
+        $entitas = $perUker
+            ? Uker::query()->with('cabang.area')->whereIn('id', $ids)->get()->keyBy('id')
+            : Cabang::query()->with('area')->whereIn('id', $ids)->get()->keyBy('id');
+
+        $baris = $ids->map(function ($entitasId) use ($aktual, $bulanLalu, $tahunLalu, $target, $entitas, $bulan) {
+            $nilai = (float) ($aktual[$entitasId] ?? 0);
             $rka = (float) ($target[$entitasId] ?? 0);
-            $nilai = (float) $total;
+            $prev = $bulan === 1 ? 0.0 : (isset($bulanLalu[$entitasId]) ? (float) $bulanLalu[$entitasId] : null);
+            $yoyBase = isset($tahunLalu[$entitasId]) ? (float) $tahunLalu[$entitasId] : null;
+            $model = $entitas[$entitasId] ?? null;
 
             return [
                 'id' => (int) $entitasId,
-                'nama' => $nama[$entitasId] ?? (string) $entitasId,
+                'nama' => $model?->nama ?? (string) $entitasId,
+                'area_nama' => $model?->area?->nama ?? $model?->cabang?->area?->nama,
                 'nilai' => Satuan::toJuta($nilai),
                 'target' => Satuan::toJuta($rka),
                 'pencapaian' => $rka > 0 ? round($nilai / $rka * 100, 2) : null,
                 'gap' => Satuan::toJuta($nilai - $rka),
+                'mtd' => $prev === null ? null : Satuan::toJuta($nilai - $prev),
+                'ytd' => Satuan::toJuta($nilai),
+                'yoy' => $yoyBase === null ? null : Satuan::toJuta($nilai - $yoyBase),
             ];
-        })->values()->sortByDesc('nilai')->values()->all();
+        })->sortByDesc('nilai')->values()->all();
 
         return [
             'tahun' => $tahun,
@@ -269,9 +326,10 @@ class LabaService
      *
      * @return array<int, float> [bulan => total]
      */
-    private function kumulatifPerBulan(int $tahun, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+    private function kumulatifPerBulan(int $tahun, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $segmen = null): array
     {
         return $this->dasar($areaId, $cabangId, $ukerId)
+            ->when($segmen !== null && $segmen !== '', fn (Builder $q) => $q->where('segmen', $segmen))
             ->where('tahun', $tahun)
             ->groupBy('bulan')
             ->orderBy('bulan')
@@ -279,6 +337,51 @@ class LabaService
             ->get()
             ->mapWithKeys(fn ($r) => [(int) $r->bulan => (float) $r->total])
             ->all();
+    }
+
+    /**
+     * Target RKA kumulatif per bulan untuk total atau satu segmen.
+     *
+     * @return array<int, float>
+     */
+    private function targetKumulatifPerBulan(int $tahun, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $segmen = null): array
+    {
+        return $this->filterOrganisasi(
+            RkaLaba::query(),
+            $areaId,
+            $cabangId,
+            $ukerId,
+        )
+            ->when($segmen !== null && $segmen !== '', fn (Builder $q) => $q->where('segmen', $segmen))
+            ->where('tahun', $tahun)
+            ->groupBy('bulan')
+            ->orderBy('bulan')
+            ->selectRaw('bulan, SUM(target) as total')
+            ->get()
+            ->mapWithKeys(fn ($r) => [(int) $r->bulan => (float) $r->total])
+            ->all();
+    }
+
+    /**
+     * Turunkan laba MTD per bulan dari nilai kumulatif YTD.
+     *
+     * @param  array<int, float>  $kumulatif
+     * @return array<int, float|null>
+     */
+    private function mtdPerBulan(array $kumulatif): array
+    {
+        if ($kumulatif === []) {
+            return [];
+        }
+
+        $hasil = [];
+        $bulanMaks = max(array_keys($kumulatif));
+
+        for ($bulan = 1; $bulan <= $bulanMaks; $bulan++) {
+            $hasil[$bulan] = $this->mtdDariKumulatif($kumulatif, $bulan);
+        }
+
+        return $hasil;
     }
 
     /**
@@ -392,7 +495,7 @@ class LabaService
     private function targetPerSegmen(int $tahun, int $bulan, ?int $areaId, ?int $cabangId, ?int $ukerId): array
     {
         return $this->filterOrganisasi(
-            RkaLaba::query()->where('cabang_id', '!=', self::EXCLUDED_REGION_ID),
+            RkaLaba::query(),
             $areaId,
             $cabangId,
             $ukerId,
@@ -425,10 +528,15 @@ class LabaService
             ->all();
     }
 
+    /**
+     * Dataset dasar Laba — TERMASUK rollup Region Office (dihitung di Total &
+     * segmen). Tabel peringkat cabang mengecualikannya sendiri lewat
+     * {@see branchPencapaian()}.
+     */
     private function dasar(?int $areaId, ?int $cabangId, ?int $ukerId): Builder
     {
         return $this->filterOrganisasi(
-            Laba::query()->where('cabang_id', '!=', self::EXCLUDED_REGION_ID),
+            Laba::query(),
             $areaId,
             $cabangId,
             $ukerId,

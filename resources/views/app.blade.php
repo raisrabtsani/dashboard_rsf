@@ -6,6 +6,12 @@
 
         <title inertia>{{ config('app.name', 'Laravel') }}</title>
 
+        <!-- Ikon tab browser memakai logo RSF yang sudah tersedia -->
+        <link rel="icon" type="image/png" sizes="512x512" href="{{ asset('overview-logo.png') }}">
+        <link rel="shortcut icon" type="image/png" href="{{ asset('overview-logo.png') }}">
+        <link rel="apple-touch-icon" href="{{ asset('overview-logo.png') }}">
+        <meta name="theme-color" content="#0757c6">
+
         <!-- Font identitas: Inter -->
         <link rel="preconnect" href="https://fonts.bunny.net">
         <link href="https://fonts.bunny.net/css?family=inter:400,500,600,700&display=swap" rel="stylesheet" />

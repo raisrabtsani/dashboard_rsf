@@ -47,18 +47,40 @@ class UploadSimpananController extends Controller
             return response()->json(['message' => $e->getMessage()], $e->status);
         }
 
-        $pesan = sprintf(
-            '%s baris masuk untuk tanggal %s.',
-            number_format($hasil['baris'], 0, ',', '.'),
-            implode(', ', $hasil['tanggal']),
-        );
+        if ($hasil['baris'] > 0) {
+            $pesan = sprintf(
+                '%s baris masuk untuk tanggal %s.',
+                number_format($hasil['baris'], 0, ',', '.'),
+                implode(', ', $hasil['tanggal']),
+            );
+        } else {
+            $pesan = 'Tidak ada baris yang masuk.';
+        }
 
-        // Berkas sumber berisi baris per rekening; sebutkan penggabungannya
-        // supaya admin tidak mengira ada baris yang hilang.
-        if ($hasil['sumber'] > $hasil['baris']) {
+        if (($hasil['dilewati'] ?? 0) > 0) {
+            $daftarUker = collect($hasil['uker_dilewati'] ?? [])
+                ->filter(fn ($id) => (int) $id > 0)
+                ->take(10)
+                ->implode(', ');
+
             $pesan .= sprintf(
-                ' %s baris berkas dijumlahkan jadi %s baris posisi (uker x produk x segmentasi x tanggal).',
-                number_format($hasil['sumber'], 0, ',', '.'),
+                ' %s baris dilewati karena id_uker belum memiliki cabang di master; nilainya tidak dimasukkan.',
+                number_format($hasil['dilewati'], 0, ',', '.'),
+            );
+
+            if ($daftarUker !== '') {
+                $pesan .= " ID uker: {$daftarUker}".
+                    (count($hasil['uker_dilewati'] ?? []) > 10 ? ', dan lainnya.' : '.');
+            }
+        }
+
+        // Hanya bandingkan baris valid dengan hasil agregasi. Baris yang dilewati
+        // karena master uker tidak ditemukan sudah dijelaskan terpisah di atas.
+        $barisValid = $hasil['sumber'] - ($hasil['dilewati'] ?? 0);
+        if ($barisValid > $hasil['baris']) {
+            $pesan .= sprintf(
+                ' %s baris valid dijumlahkan menjadi %s baris posisi (uker x produk x segmentasi x tanggal).',
+                number_format($barisValid, 0, ',', '.'),
                 number_format($hasil['baris'], 0, ',', '.'),
             );
         }

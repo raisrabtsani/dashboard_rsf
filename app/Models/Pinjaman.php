@@ -22,8 +22,14 @@ class Pinjaman extends Model
     /** OS = jumlah ketiganya. */
     public const KUALITAS = [self::KUALITAS_LANCAR, self::KUALITAS_SML, self::KUALITAS_NPL];
 
-    /** @var list<string> */
-    public const SEGMEN = ['Mikro', 'Kecil', 'Menengah', 'Konsumer'];
+    /**
+     * Urutan tampil segmen (kartu & tabel), mengikuti data aktual Region 7:
+     * Micro / Small / Consumer / Medium. HANYA untuk pengurutan — segmen dipakai
+     * apa adanya dari data; yang di luar daftar ini tetap tampil di akhir.
+     *
+     * @var list<string>
+     */
+    public const SEGMEN = ['Micro', 'Small', 'Consumer', 'Medium'];
 
     protected $table = 'pinjaman';
 

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\ImportException;
+use App\Services\Concerns\MelaporkanImport;
 use App\Models\RkaSimpananWholesale;
 use App\Models\Simpanan;
 use App\Models\Uker;
@@ -19,6 +20,8 @@ use Illuminate\Support\Facades\DB;
  */
 class RkaSimpananWholesaleCsvImportService
 {
+    use MelaporkanImport;
+
     /**
      * @var array<string, list<string>>
      */
@@ -45,10 +48,6 @@ class RkaSimpananWholesaleCsvImportService
     {
         ['baris' => $baris, 'dilewati' => $dilewati] = $this->baca($path, $namaAsli ?? basename($path));
 
-        if ($baris->isEmpty()) {
-            throw ImportException::berkas('Tidak ada baris target yang bisa diimpor dari berkas ini.');
-        }
-
         DB::transaction(function () use ($baris) {
             $baris->chunk(1000)->each(fn (Collection $potongan) => RkaSimpananWholesale::query()->upsert(
                 $potongan->values()->all(),
@@ -62,6 +61,7 @@ class RkaSimpananWholesaleCsvImportService
             'baris' => $baris->count(),
             'dilewati' => $dilewati,
             'total_target' => (float) $baris->sum(fn (array $b) => $b['target']),
+            'laporan' => $this->laporanImport(),
         ];
     }
 
@@ -101,19 +101,34 @@ class RkaSimpananWholesaleCsvImportService
         $ukerValid = Uker::query()->pluck('cabang_id', 'id');
         $now = Carbon::now();
         $dilewati = 0;
+        $sebelumnya = [
+            'id_uker' => null,
+            'produk' => null,
+            'segmentasi' => '',
+            'tahun' => null,
+            'bulan' => null,
+        ];
 
-        $hasil = $baris->map(function (array $r, int $i) use ($ukerValid, $now, &$dilewati) {
+        $hasil = $this->petakanBarisAman($baris, function (array $r, int $i) use ($ukerValid, $now, &$dilewati, &$sebelumnya) {
             $nomor = $i + 2;
 
-            $ukerId = (int) trim((string) $r['id_uker']);
-            $produk = trim((string) $r['produk']);
-            $tahun = (int) trim((string) $r['tahun']);
+            $rawUker = trim((string) ($r['id_uker'] ?? ''));
+            $rawProduk = trim((string) ($r['produk'] ?? ''));
+            $rawSegmentasi = trim((string) ($r['segmentasi'] ?? ''));
+            $rawTahun = trim((string) ($r['tahun'] ?? ''));
+            $rawBulan = trim((string) ($r['bulan'] ?? ''));
 
-            if (! $ukerValid->has($ukerId)) {
+            $ukerId = $rawUker !== '' ? (int) $rawUker : $sebelumnya['id_uker'];
+            $produk = $rawProduk !== '' ? $rawProduk : $sebelumnya['produk'];
+            $segmentasi = $rawSegmentasi !== '' ? $rawSegmentasi : ($sebelumnya['segmentasi'] ?? '');
+            $tahun = $rawTahun !== '' ? (int) $rawTahun : ($sebelumnya['tahun'] ?? (int) $now->year);
+            $bulan = $rawBulan !== '' ? Bulan::uraiAtauGagal($rawBulan, $nomor) : ($sebelumnya['bulan'] ?? (int) $now->month);
+
+            if (! $ukerId || ! $ukerValid->has($ukerId)) {
                 throw ImportException::berkas("Baris {$nomor}: id_uker {$ukerId} tidak ada di master uker.");
             }
 
-            if (! in_array($produk, Simpanan::PRODUK, true)) {
+            if (! $produk || ! in_array($produk, Simpanan::PRODUK, true)) {
                 throw ImportException::berkas(
                     "Baris {$nomor}: produk '{$produk}' tidak dikenal. Gunakan: ".implode(', ', Simpanan::PRODUK).'.',
                 );
@@ -129,20 +144,27 @@ class RkaSimpananWholesaleCsvImportService
                 return null;
             }
 
+            $sebelumnya = [
+                'id_uker' => $ukerId,
+                'produk' => $produk,
+                'segmentasi' => $segmentasi,
+                'tahun' => $tahun,
+                'bulan' => $bulan,
+            ];
+
             return [
                 'cabang_id' => $ukerValid[$ukerId],
                 'uker_id' => $ukerId,
                 'produk' => $produk,
-                'segmentasi' => trim((string) ($r['segmentasi'] ?? '')),
+                'segmentasi' => $segmentasi,
                 'tahun' => $tahun,
-                'bulan' => Bulan::uraiAtauGagal((string) $r['bulan'], $nomor),
+                'bulan' => $bulan,
                 'target' => $this->angka($r['target'], $nomor),
                 'created_at' => $now,
                 'updated_at' => $now,
             ];
-        })->filter()->values();
+        });
 
-        $this->tolakBarisKembar($hasil, $namaBerkas);
 
         return ['baris' => $hasil, 'dilewati' => $dilewati];
     }

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\ImportException;
+use App\Services\Concerns\MelaporkanImport;
 use App\Models\Pinjaman;
 use App\Models\RkaPinjamanCommercial;
 use App\Models\Uker;
@@ -19,6 +20,8 @@ use Illuminate\Support\Facades\DB;
  */
 class RkaPinjamanCommercialCsvImportService
 {
+    use MelaporkanImport;
+
     /**
      * @var array<string, list<string>>
      */
@@ -46,10 +49,6 @@ class RkaPinjamanCommercialCsvImportService
     {
         ['baris' => $baris, 'dilewati' => $dilewati] = $this->baca($path, $namaAsli ?? basename($path));
 
-        if ($baris->isEmpty()) {
-            throw ImportException::berkas('Tidak ada baris target yang bisa diimpor dari berkas ini.');
-        }
-
         DB::transaction(function () use ($baris) {
             $baris->chunk(1000)->each(fn (Collection $potongan) => RkaPinjamanCommercial::query()->upsert(
                 $potongan->values()->all(),
@@ -63,6 +62,7 @@ class RkaPinjamanCommercialCsvImportService
             'baris' => $baris->count(),
             'dilewati' => $dilewati,
             'total_target' => (float) $baris->sum(fn (array $b) => $b['target']),
+            'laporan' => $this->laporanImport(),
         ];
     }
 
@@ -103,7 +103,7 @@ class RkaPinjamanCommercialCsvImportService
         $now = Carbon::now();
         $dilewati = 0;
 
-        $hasil = $baris->map(function (array $r, int $i) use ($ukerValid, $now, &$dilewati) {
+        $hasil = $this->petakanBarisAman($baris, function (array $r, int $i) use ($ukerValid, $now, &$dilewati) {
             $nomor = $i + 2;
 
             $ukerId = (int) trim((string) $r['id_uker']);
@@ -143,9 +143,8 @@ class RkaPinjamanCommercialCsvImportService
                 'created_at' => $now,
                 'updated_at' => $now,
             ];
-        })->filter()->values();
+        });
 
-        $this->tolakBarisKembar($hasil, $namaBerkas);
 
         return ['baris' => $hasil, 'dilewati' => $dilewati];
     }

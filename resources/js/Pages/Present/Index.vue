@@ -1,20 +1,19 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import LoadingOverlay from '@/Components/LoadingOverlay.vue';
+import LineChart from '@/Components/LineChart.vue';
 import PresentCard from '@/Components/PresentCard.vue';
 import PresentDetailTable from '@/Components/PresentDetailTable.vue';
 import { Head } from '@inertiajs/vue3';
 import { computed, onMounted, ref } from 'vue';
 import { fetchArea, fetchDetail, fetchOverview } from '@/services/presentApi';
-import { formatAngka, formatPct } from '@/utils/formatAngka';
+import { formatAngka, formatDelta, formatPct } from '@/utils/formatAngka';
 
 const props = defineProps({
     tanggalAwal: { type: String, required: true },
 });
 
-// Halaman rapat, bukan eksplorasi: satu-satunya kontrol adalah tanggal posisi.
 const tanggal = ref(props.tanggalAwal);
-
 const overview = ref(null);
 const area = ref(null);
 const detail = ref(null);
@@ -24,6 +23,90 @@ const kartuRegion = computed(() => overview.value?.kartu ?? []);
 const rasio = computed(() => overview.value?.rasio ?? []);
 const blokArea = computed(() => area.value?.area ?? []);
 const tabelDetail = computed(() => detail.value?.tabel ?? []);
+const trend = computed(() => overview.value?.trend ?? {});
+
+const NAMA_BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+const NAMA_BULAN_PENDEK = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
+
+const tanggalLabel = computed(() => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(tanggal.value);
+    return m ? `${Number(m[3])} ${NAMA_BULAN[Number(m[2]) - 1]} ${m[1]}` : tanggal.value;
+});
+
+const inverse = (key) => ['sml', 'npl'].includes(key);
+const cardByKey = (key) => kartuRegion.value.find((item) => item.key === key) ?? null;
+
+const dpkCard = computed(() => cardByKey('dpk'));
+const dpkProduk = computed(() => {
+    const peta = new Map((dpkCard.value?.rincian ?? []).map((item) => [String(item.label).toLowerCase(), item]));
+    return [
+        { key: 'tabungan', label: 'Tabungan', ...(peta.get('tabungan') ?? {}) },
+        { key: 'giro', label: 'Giro', ...(peta.get('giro') ?? {}) },
+        { key: 'deposito', label: 'Deposito', ...(peta.get('deposito') ?? {}) },
+    ];
+});
+
+const chartCards = computed(() => [
+    { key: 'pinjaman', judul: 'Total Pinjaman', warna: '#2d7cff', kartu: cardByKey('pinjaman') },
+    { key: 'sml', judul: 'SML', warna: '#f59e0b', kartu: cardByKey('sml') },
+    { key: 'npl', judul: 'NPL', warna: '#ef4444', kartu: cardByKey('npl') },
+]);
+
+function periodeTrend() {
+    const posisi = new Date(`${tanggal.value}T00:00:00`);
+    const tahun = posisi.getFullYear();
+    const bulan = posisi.getMonth() + 1;
+    const hasil = [{ tahun: tahun - 1, bulan: 12 }];
+
+    for (let mundur = 4; mundur >= 0; mundur -= 1) {
+        const periode = new Date(tahun, bulan - 1 - mundur, 1);
+        const item = { tahun: periode.getFullYear(), bulan: periode.getMonth() + 1 };
+        if (!hasil.some((p) => p.tahun === item.tahun && p.bulan === item.bulan)) hasil.push(item);
+    }
+
+    return hasil;
+}
+
+function buildTrendChart(seri) {
+    const sumber = seri ?? [];
+    if (!sumber.length) return null;
+
+    const periode = periodeTrend();
+    const labels = Array.from({ length: 31 }, (_, i) => String(i + 1));
+    const warnaTrend = ['#7c8ea6', '#5f95ff', '#31c48d', '#f0ad32', '#ff6b6b', '#14b8d4'];
+
+    return {
+        labels,
+        datasets: periode.map((p, idx) => {
+            const dataSeri = sumber.find((s) => Number(s.tahun) === p.tahun && Number(s.bulan) === p.bulan);
+            const terakhir = idx === periode.length - 1;
+            const warna = warnaTrend[idx] ?? '#14b8d4';
+
+            return {
+                label: `${NAMA_BULAN_PENDEK[p.bulan - 1]} ${p.tahun}`,
+                borderColor: warna,
+                backgroundColor: warna,
+                data: labels.map((hari) => dataSeri?.titik?.find((t) => t.hari === Number(hari))?.nilai ?? null),
+                spanGaps: false,
+                borderDash: terakhir ? [] : [5, 5],
+                borderWidth: terakhir ? 3 : 2,
+                pointRadius: 0,
+                pointHoverRadius: terakhir ? 4 : 3,
+                fill: false,
+            };
+        }),
+    };
+}
+
+const chartMap = computed(() => ({
+    dpk: buildTrendChart(trend.value?.dpk?.seri),
+    dpkTabungan: buildTrendChart(trend.value?.dpk?.seri_produk?.tabungan),
+    dpkGiro: buildTrendChart(trend.value?.dpk?.seri_produk?.giro),
+    pinjaman: buildTrendChart(trend.value?.pinjaman?.seri),
+    sml: buildTrendChart(trend.value?.sml?.seri),
+    npl: buildTrendChart(trend.value?.npl?.seri),
+    recovery: buildTrendChart(trend.value?.recovery?.seri),
+}));
 
 async function muat() {
     memuat.value = true;
@@ -43,41 +126,57 @@ onMounted(muat);
 </script>
 
 <template>
-    <Head title="PRESENT — Rapat Pagi Region" />
+    <Head title="Present RSF" />
 
     <AuthenticatedLayout>
-        <template #header>
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <h2 class="text-xl font-semibold leading-tight text-gray-800">
-                    PRESENT — Rapat Pagi Region
-                </h2>
-                <label class="flex items-center gap-2 text-xs text-gray-500">
-                    Tanggal Posisi
-                    <input
-                        v-model="tanggal"
-                        type="date"
-                        class="rounded-md border-gray-300 text-sm"
-                        @change="muat"
-                    />
-                </label>
-            </div>
-        </template>
+        <div class="relative -mx-4 bg-[#f4f8ff] px-4 py-4 sm:-mx-6 sm:px-6">
+            <div class="mx-auto max-w-[1800px] space-y-4 pb-8">
+                <LoadingOverlay :show="memuat" />
 
-        <div class="relative py-8">
-            <LoadingOverlay :show="memuat" />
+                <section class="relative overflow-hidden rounded-[20px] border border-[#2a73d6] bg-gradient-to-r from-[#0654bf] via-[#0a66d3] to-[#1f7ce0] px-4 py-4 text-white shadow-[0_14px_34px_rgba(10,82,181,0.25)] sm:px-5">
+                    <div class="pointer-events-none absolute inset-0 opacity-[0.08]" style="background-image: linear-gradient(135deg, transparent 0 46%, rgba(255,255,255,.45) 47% 48%, transparent 49% 100%); background-size: 140px 140px;" />
+                    <div class="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full bg-white/10" />
+                    <div class="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                        <div class="flex items-center gap-3">
+                            <div class="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-white/10 p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.2)] ring-1 ring-white/20">
+                                <img src="/overview-logo.png" alt="RSF" class="h-full w-full object-contain" />
+                            </div>
+                            <div>
+                                <p class="text-[11px] font-bold uppercase tracking-[0.18em] text-cyan-100/85">Highlight Kinerja</p>
+                                <h1 class="mt-1 text-2xl font-black leading-none tracking-tight sm:text-[2rem]">Region 7 Jakarta 2</h1>
+                                <div class="mt-2 inline-flex items-center gap-2 rounded-lg bg-white/12 px-3 py-1 text-[11px] font-semibold text-white/90">
+                                    <span class="h-2 w-2 rounded-full bg-emerald-300" />
+                                    Posisi {{ tanggalLabel }}
+                                </div>
+                            </div>
+                        </div>
 
-            <div class="mx-auto max-w-7xl space-y-10 px-4 sm:px-6 lg:px-8 2xl:max-w-[1600px] tv:max-w-[1840px]">
-                <!-- SLIDE 1 — Overview Region -->
-                <section>
-                    <div class="mb-3 flex items-baseline gap-3">
-                        <span class="rounded bg-brand-600 px-2 py-0.5 text-xs font-bold text-white">1</span>
-                        <h3 class="text-lg font-semibold text-gray-800">Overview Region</h3>
+                        <div class="flex items-end gap-3 self-end lg:self-auto">
+                            <div class="rounded-xl bg-white/10 px-3 py-2 backdrop-blur ring-1 ring-white/15">
+                                <label class="block text-[9px] font-bold uppercase tracking-[0.16em] text-white/65">Tanggal Posisi</label>
+                                <input
+                                    v-model="tanggal"
+                                    type="date"
+                                    class="mt-1 rounded-lg border-white/20 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 shadow-sm focus:border-cyan-300 focus:ring-cyan-300"
+                                    @change="muat"
+                                />
+                            </div>
+                            <div class="hidden items-end gap-1 xl:flex" aria-hidden="true">
+                                <div class="h-12 w-5 rounded-t-md bg-white/35" />
+                                <div class="h-16 w-5 rounded-t-md bg-white/45" />
+                                <div class="h-20 w-5 rounded-t-md bg-white/55" />
+                                <div class="h-24 w-5 rounded-t-md bg-white/65" />
+                            </div>
+                        </div>
                     </div>
+                </section>
 
-                    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <section class="space-y-3">
+                    <div class="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5">
                         <PresentCard
                             v-for="k in kartuRegion"
-                            :key="k.key"
+                            :key="`region-${k.key}`"
+                            :metric-key="k.key"
                             :judul="k.judul"
                             :nilai="k.nilai"
                             :delta="k.delta"
@@ -85,73 +184,224 @@ onMounted(muat);
                             :pencapaian="k.pencapaian"
                             :gap="k.gap"
                             :per="k.per"
+                            :inverse="inverse(k.key)"
+                            :rincian="k.rincian ?? []"
+                            :rasio="k.rasio ?? null"
                         />
                     </div>
 
-                    <!-- %CASA + %LDR -->
-                    <div class="mt-4 grid grid-cols-2 gap-4 sm:max-w-2xl">
-                        <div v-for="r in rasio" :key="r.key" class="present-card">
-                            <p class="truncate whitespace-nowrap text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                {{ r.judul }}
-                            </p>
-                            <p class="present-nilai mt-1 font-semibold tabular-nums text-gray-900">
-                                {{ formatPct(r.nilai) }}
-                            </p>
-                            <p class="mt-1 whitespace-nowrap text-[11px] text-gray-400">
-                                {{ r.deskripsi }}
-                            </p>
-                            <p class="whitespace-nowrap text-[11px] text-gray-400">
-                                {{ formatAngka(r.pembilang) }} / {{ formatAngka(r.penyebut) }}
-                            </p>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- SLIDE 2 — Overview per Area -->
-                <section>
-                    <div class="mb-3 flex items-baseline gap-3">
-                        <span class="rounded bg-brand-600 px-2 py-0.5 text-xs font-bold text-white">2</span>
-                        <h3 class="text-lg font-semibold text-gray-800">Overview per Area</h3>
-                    </div>
-
-                    <div class="space-y-6">
-                        <div v-for="a in blokArea" :key="a.area_id">
-                            <h4 class="mb-2 text-sm font-semibold text-gray-600">{{ a.nama }}</h4>
-                            <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
-                                <PresentCard
-                                    v-for="k in a.kartu"
-                                    :key="k.key"
-                                    :judul="k.judul"
-                                    :nilai="k.nilai"
-                                    :delta="k.delta"
-                                    :target="k.target"
-                                    :pencapaian="k.pencapaian"
-                                    :gap="k.gap"
-                                    :per="k.per"
-                                />
+                    <div class="grid grid-cols-1 gap-2 lg:grid-cols-2">
+                        <div
+                            v-for="r in rasio"
+                            :key="r.key"
+                            class="relative overflow-hidden rounded-[16px] bg-gradient-to-r from-[#0a56be] to-[#0a6bd5] px-4 py-3 text-white shadow-[0_10px_24px_rgba(11,93,196,0.22)]"
+                        >
+                            <span class="pointer-events-none absolute -right-5 -top-10 h-28 w-28 rounded-full bg-white/10" />
+                            <div class="relative flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+                                <div>
+                                    <p class="text-[10px] font-bold uppercase tracking-[0.16em] text-white/70">{{ r.judul }}</p>
+                                    <p class="mt-1 text-[2.15rem] font-black leading-none tabular-nums">{{ formatPct(r.nilai) }}</p>
+                                    <p class="mt-2 text-xs font-medium text-white/75">{{ r.deskripsi }}</p>
+                                </div>
+                                <div class="rounded-xl bg-white/12 px-3 py-2 text-left ring-1 ring-white/15 sm:text-right">
+                                    <p class="text-[10px] font-semibold uppercase text-white/60">Komposisi</p>
+                                    <p class="mt-1 text-sm font-black tabular-nums">{{ formatAngka(r.pembilang) }} / {{ formatAngka(r.penyebut) }}</p>
+                                </div>
                             </div>
                         </div>
-                        <p v-if="!blokArea.length" class="text-sm text-gray-400">Tidak ada data area.</p>
                     </div>
                 </section>
 
-                <!-- SLIDE 3 — Detail per Cabang -->
-                <section>
-                    <div class="mb-3 flex items-baseline gap-3">
-                        <span class="rounded bg-brand-600 px-2 py-0.5 text-xs font-bold text-white">3</span>
-                        <h3 class="text-lg font-semibold text-gray-800">Detail per Cabang</h3>
+                <section class="space-y-2">
+                    <div
+                        v-for="a in blokArea"
+                        :key="a.area_id"
+                        class="rounded-[18px] border border-[#2b72d4] bg-gradient-to-r from-[#0a57c0] via-[#0e66cf] to-[#1670d6] p-2.5 shadow-[0_12px_26px_rgba(10,87,192,0.18)]"
+                    >
+                        <div class="mb-2 flex items-center justify-between gap-3 px-1 text-white">
+                            <div>
+                                <p class="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-100/80">Area Highlight</p>
+                                <h3 class="text-sm font-black uppercase tracking-wide">{{ a.nama }}</h3>
+                            </div>
+                            <span class="rounded-lg bg-white/12 px-2.5 py-1 text-[10px] font-semibold ring-1 ring-white/15">Posisi {{ tanggalLabel }}</span>
+                        </div>
+                        <div class="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5">
+                            <PresentCard
+                                v-for="k in a.kartu"
+                                :key="`${a.area_id}-${k.key}`"
+                                :metric-key="k.key"
+                                :judul="k.judul"
+                                :nilai="k.nilai"
+                                :delta="k.delta"
+                                :target="k.target"
+                                :pencapaian="k.pencapaian"
+                                :gap="k.gap"
+                                :per="k.per"
+                                :inverse="inverse(k.key)"
+                                :rincian="k.rincian ?? []"
+                                :rasio="k.rasio ?? null"
+                                compact
+                            />
+                        </div>
+                    </div>
+                </section>
+
+                <section class="space-y-3">
+                    <div class="rounded-[18px] border border-slate-200 bg-white p-3 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
+                        <div class="mb-2 flex items-center justify-between gap-3">
+                            <div>
+                                <p class="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Trend Kinerja</p>
+                                <h3 class="text-sm font-black uppercase tracking-wide text-[#0756bd]">Dana Pihak Ketiga</h3>
+                            </div>
+                            <span class="rounded-full bg-blue-50 px-3 py-1 text-[10px] font-semibold text-blue-700 ring-1 ring-blue-100">6 periode terakhir</span>
+                        </div>
+
+                        <div class="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(330px,0.82fr)_minmax(0,1.28fr)]">
+                            <div v-if="dpkCard" class="relative self-start overflow-hidden rounded-xl bg-gradient-to-br from-[#1264ce] via-[#0757c6] to-[#0049ad] p-4 text-white shadow-md">
+                                <div class="pointer-events-none absolute -right-16 -top-20 h-64 w-64 rounded-full bg-white/5" />
+                                <div class="pointer-events-none absolute right-12 top-2 h-40 w-40 rounded-full border border-white/5" />
+
+                                <div class="relative flex items-start justify-between gap-3">
+                                    <div class="min-w-0">
+                                        <p class="text-[10px] font-bold uppercase tracking-[0.14em] text-white/75">Total Dana Pihak Ketiga</p>
+                                        <p class="mt-1 text-3xl font-extrabold leading-none tabular-nums sm:text-[34px]">{{ formatAngka(dpkCard.nilai) }}</p>
+                                        <p class="mt-2 text-xs font-semibold text-cyan-100">Posisi {{ tanggalLabel }}</p>
+                                    </div>
+
+                                    <div class="w-36 shrink-0 rounded-xl bg-white/10 p-3 text-right ring-1 ring-white/10 backdrop-blur-sm sm:w-40">
+                                        <p class="text-[9px] font-bold uppercase tracking-wide text-white/65">RKA</p>
+                                        <p class="mt-0.5 text-xl font-extrabold tabular-nums">{{ formatAngka(dpkCard.target) }}</p>
+                                        <span class="mt-2 inline-flex rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-extrabold text-emerald-700">
+                                            Penc {{ formatPct(dpkCard.pencapaian) }}
+                                        </span>
+                                        <p class="mt-1.5 text-[11px] font-semibold text-white/85">Gap {{ formatDelta(dpkCard.gap) }}</p>
+                                    </div>
+                                </div>
+
+                                <div class="relative mt-4 grid grid-cols-3 gap-2">
+                                    <div v-for="item in dpkProduk" :key="item.key" class="rounded-lg bg-white/10 px-3 py-2 ring-1 ring-white/10">
+                                        <p class="text-[9px] font-bold uppercase tracking-wide text-white/70">{{ item.label }}</p>
+                                        <p class="mt-1 text-sm font-extrabold tabular-nums text-white">{{ formatAngka(item.nilai) }}</p>
+                                        <p class="mt-0.5 text-[10px] font-bold text-emerald-200">{{ formatPct(item.pencapaian) }}</p>
+                                    </div>
+                                </div>
+
+                                <div class="relative mt-4 grid grid-cols-2 divide-x divide-white/10 border-t border-white/10 pt-3">
+                                    <div class="px-1.5 text-center first:pl-0 last:pr-0">
+                                        <p class="text-[9px] font-bold uppercase tracking-wider text-white/55">MTD</p>
+                                        <p class="mt-1 text-sm font-extrabold tabular-nums">{{ formatDelta(dpkCard.delta?.mtd?.nilai) }}</p>
+                                        <p class="mt-0.5 text-[9px] font-semibold tabular-nums" :class="Number(dpkCard.delta?.mtd?.nilai ?? 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'">
+                                            {{ formatPct(dpkCard.delta?.mtd?.persen) }}
+                                        </p>
+                                    </div>
+                                    <div class="px-1.5 text-center first:pl-0 last:pr-0">
+                                        <p class="text-[9px] font-bold uppercase tracking-wider text-white/55">YTD</p>
+                                        <p class="mt-1 text-sm font-extrabold tabular-nums">{{ formatDelta(dpkCard.delta?.ytd?.nilai) }}</p>
+                                        <p class="mt-0.5 text-[9px] font-semibold tabular-nums" :class="Number(dpkCard.delta?.ytd?.nilai ?? 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'">
+                                            {{ formatPct(dpkCard.delta?.ytd?.persen) }}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="rounded-[16px] border border-slate-200 p-3">
+                                <div class="flex items-center justify-between gap-2">
+                                    <h3 class="text-sm font-black uppercase tracking-wide text-slate-600">Total Trend</h3>
+                                    <span class="text-[10px] text-slate-300">Tahun {{ trend?.tahun ?? '' }}</span>
+                                </div>
+                                <div class="mt-1 h-[260px]">
+                                    <LineChart v-if="chartMap.dpk" :labels="chartMap.dpk.labels" :datasets="chartMap.dpk.datasets" variant="monthly-trend" :show-last-value-tag="true" />
+                                    <p v-else class="pt-24 text-center text-xs text-slate-400">Tidak ada data.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                            <div class="rounded-[16px] border border-slate-200 p-3">
+                                <div class="flex items-start justify-between gap-2">
+                                    <div>
+                                        <h3 class="text-sm font-black uppercase tracking-wide text-slate-600">Tabungan</h3>
+                                        <p class="mt-0.5 text-xs font-extrabold tabular-nums text-slate-700">{{ formatAngka(dpkProduk[0]?.nilai) }}</p>
+                                    </div>
+                                    <span class="rounded-full bg-slate-50 px-2 py-1 text-[9px] font-bold text-slate-500 ring-1 ring-slate-100">{{ formatPct(dpkProduk[0]?.pencapaian) }}</span>
+                                </div>
+                                <div class="mt-1 h-[170px]">
+                                    <LineChart v-if="chartMap.dpkTabungan" :labels="chartMap.dpkTabungan.labels" :datasets="chartMap.dpkTabungan.datasets" variant="monthly-trend" :show-last-value-tag="true" />
+                                    <p v-else class="pt-16 text-center text-[10px] text-slate-400">Tidak ada data.</p>
+                                </div>
+                            </div>
+
+                            <div class="rounded-[16px] border border-slate-200 p-3">
+                                <div class="flex items-start justify-between gap-2">
+                                    <div>
+                                        <h3 class="text-sm font-black uppercase tracking-wide text-slate-600">Giro</h3>
+                                        <p class="mt-0.5 text-xs font-extrabold tabular-nums text-slate-700">{{ formatAngka(dpkProduk[1]?.nilai) }}</p>
+                                    </div>
+                                    <span class="rounded-full bg-slate-50 px-2 py-1 text-[9px] font-bold text-slate-500 ring-1 ring-slate-100">{{ formatPct(dpkProduk[1]?.pencapaian) }}</span>
+                                </div>
+                                <div class="mt-1 h-[170px]">
+                                    <LineChart v-if="chartMap.dpkGiro" :labels="chartMap.dpkGiro.labels" :datasets="chartMap.dpkGiro.datasets" variant="monthly-trend" :show-last-value-tag="true" />
+                                    <p v-else class="pt-16 text-center text-[10px] text-slate-400">Tidak ada data.</p>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
-                    <div class="grid grid-cols-1 gap-6 2xl:grid-cols-2">
-                        <PresentDetailTable
-                            v-for="t in tabelDetail"
-                            :key="t.key"
-                            :judul="t.judul"
-                            :baris="t.baris"
-                            :tanggal="t.tanggal"
-                            :inverse="t.inverse"
-                        />
+                    <div class="rounded-[18px] border border-slate-200 bg-white p-3 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
+                        <div class="mb-2 flex items-center justify-between gap-3">
+                            <div>
+                                <p class="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Trend Kinerja</p>
+                                <h3 class="text-sm font-black uppercase tracking-wide text-[#0756bd]">Pinjaman, SML, dan NPL</h3>
+                            </div>
+                            <span class="rounded-full bg-blue-50 px-3 py-1 text-[10px] font-semibold text-blue-700 ring-1 ring-blue-100">Posisi {{ tanggalLabel }}</span>
+                        </div>
+                        <div class="grid grid-cols-1 gap-3 xl:grid-cols-3">
+                            <div
+                                v-for="c in chartCards.filter((item) => item.kartu)"
+                                :key="`chart-${c.key}`"
+                                class="rounded-[16px] border border-slate-200 p-3"
+                            >
+                                <div class="grid grid-cols-1 gap-3 lg:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-1">
+                                    <PresentCard
+                                        compact
+                                        :metric-key="c.kartu.key"
+                                        :judul="c.kartu.judul"
+                                        :nilai="c.kartu.nilai"
+                                        :delta="c.kartu.delta"
+                                        :target="c.kartu.target"
+                                        :pencapaian="c.kartu.pencapaian"
+                                        :gap="c.kartu.gap"
+                                        :per="c.kartu.per"
+                                        :inverse="inverse(c.kartu.key)"
+                                        :rincian="c.kartu.rincian ?? []"
+                                        :rasio="c.kartu.rasio ?? null"
+                                    />
+                                    <div class="rounded-[14px] border border-slate-100 p-2">
+                                        <LineChart
+                                            v-if="chartMap[c.key]"
+                                            :labels="chartMap[c.key].labels"
+                                            :datasets="chartMap[c.key].datasets"
+                                            variant="monthly-trend"
+                                            :show-last-value-tag="true"
+                                        />
+                                        <p v-else class="pt-16 text-center text-[10px] text-slate-400">Tidak ada data.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
+                </section>
+
+                <section class="space-y-3">
+                    <PresentDetailTable
+                        v-for="t in tabelDetail"
+                        :key="t.key"
+                        :judul="t.judul"
+                        :baris="t.baris"
+                        :kolom="t.kolom"
+                        :tanggal="t.tanggal"
+                        :inverse="t.inverse"
+                    />
                 </section>
             </div>
         </div>

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\ImportException;
+use App\Services\Concerns\MelaporkanImport;
 use App\Models\Ph;
 use App\Models\Uker;
 use App\Support\PetaKolom;
@@ -34,6 +35,8 @@ use Throwable;
  */
 class PhCsvImportService
 {
+    use MelaporkanImport;
+
     /** @var array<string, list<string>> */
     public const ALIAS = [
         'id_cabang' => ['cabang_id', 'kode_cabang', 'cabang'],
@@ -55,24 +58,12 @@ class PhCsvImportService
         $agregat = $this->jumlahkan($mentah);
 
         $periodeBerkas = $agregat->pluck('periode')->unique()->sort()->values();
-
-        $dilewati = $timpa
-            ? collect()
-            : $this->periodeSudahAda($periodeBerkas);
-
-        $masuk = $agregat->reject(fn (array $b) => $dilewati->contains($b['periode']))->values();
-
-        if ($masuk->isEmpty()) {
-            throw ImportException::bentrok(
-                'Semua periode di berkas ini sudah ada: '.$dilewati->implode(', ').
-                '. Hapus periode tersebut dulu bila ingin menggantinya.',
-            );
-        }
+        $dilewati = collect();
+        $masuk = $agregat;
 
         DB::transaction(function () use ($masuk) {
             $masuk->chunk(1000)->each(fn (Collection $potongan) => Ph::query()->upsert(
                 $potongan->values()->all(),
-                // Harus cocok persis dengan indeks ph_unique.
                 ['uker_id', 'segmen', 'periode'],
                 ['cabang_id', 'saldo', 'updated_at'],
             ));
@@ -85,6 +76,7 @@ class PhCsvImportService
             'dilewati' => $dilewati->all(),
             'fallback' => $mentah->where('fallback', true)->count(),
             'total' => (float) $masuk->sum(fn (array $b) => $b['saldo']),
+            'laporan' => $this->laporanImport(),
         ];
     }
 
@@ -93,7 +85,7 @@ class PhCsvImportService
      *
      * @return list<array<string, mixed>>
      */
-    public function riwayat(int $batas = 60): array
+    public function riwayat(int $batas = 1000): array
     {
         return Ph::query()
             ->groupBy('periode')
@@ -182,8 +174,7 @@ class PhCsvImportService
                     'created_at' => $now,
                     'updated_at' => $now,
                 ];
-            })
-            ->values();
+            });
     }
 
     /**
@@ -197,7 +188,7 @@ class PhCsvImportService
         $ukerValid = Uker::query()->pluck('cabang_id', 'id');
         $cabangValid = $ukerValid->values()->unique();
 
-        return $baris->map(function (array $r, int $i) use ($ukerValid, $cabangValid) {
+        return $this->petakanBarisAman($baris, function (array $r, int $i) use ($ukerValid, $cabangValid) {
             $nomor = $i + 2;
 
             $cabangId = (int) trim((string) $r['id_cabang']);
@@ -241,7 +232,7 @@ class PhCsvImportService
                 'saldo' => $this->angka($r['saldo'], $nomor),
                 'fallback' => $fallback,
             ];
-        })->values();
+        });
     }
 
     private function periode(mixed $nilai, int $nomor): string
