@@ -152,17 +152,65 @@ class SimpananService
     public function chart(string $tanggal, ?int $areaId, ?int $cabangId, ?int $ukerId): array
     {
         $posisi = Carbon::parse($tanggal)->startOfDay();
+        $rentang = [$posisi->copy()->startOfYear()->toDateString(), $posisi->toDateString()];
 
-        $harian = $this->dasar($areaId, $cabangId, $ukerId)
-            ->whereBetween('tanggal', [$posisi->copy()->startOfYear()->toDateString(), $posisi->toDateString()])
+        $total = $this->dasar($areaId, $cabangId, $ukerId)
+            ->whereBetween('tanggal', $rentang)
             ->groupBy('tanggal')
             ->orderBy('tanggal')
             ->selectRaw('tanggal, SUM(saldo) as total')
             ->pluck('total', 'tanggal');
 
-        $seri = collect($harian)
+        // Rincian per produk per tanggal — untuk chart Tabungan/Giro/Deposito/CASA.
+        $perProduk = $this->dasar($areaId, $cabangId, $ukerId)
+            ->whereBetween('tanggal', $rentang)
+            ->groupBy('tanggal', 'produk')
+            ->selectRaw('tanggal, produk, SUM(saldo) as total')
+            ->get();
+
+        $map = [
+            Simpanan::PRODUK_TABUNGAN => [],
+            Simpanan::PRODUK_GIRO => [],
+            Simpanan::PRODUK_DEPOSITO => [],
+        ];
+
+        foreach ($perProduk as $r) {
+            $tgl = Carbon::parse($r->tanggal)->toDateString();
+            $map[$r->produk][$tgl] = ($map[$r->produk][$tgl] ?? 0) + (float) $r->total;
+        }
+
+        // CASA = Tabungan + Giro per tanggal.
+        $casa = [];
+
+        foreach ($map[Simpanan::PRODUK_TABUNGAN] + $map[Simpanan::PRODUK_GIRO] as $tgl => $_) {
+            $casa[$tgl] = ($map[Simpanan::PRODUK_TABUNGAN][$tgl] ?? 0) + ($map[Simpanan::PRODUK_GIRO][$tgl] ?? 0);
+        }
+
+        return [
+            'tahun' => $posisi->year,
+            'seri' => $this->seriBulanan($total),
+            'seri_produk' => [
+                'tabungan' => $this->seriBulanan(collect($map[Simpanan::PRODUK_TABUNGAN])),
+                'giro' => $this->seriBulanan(collect($map[Simpanan::PRODUK_GIRO])),
+                'deposito' => $this->seriBulanan(collect($map[Simpanan::PRODUK_DEPOSITO])),
+                'casa' => $this->seriBulanan(collect($casa)),
+            ],
+        ];
+    }
+
+    /**
+     * Bangun seri bulanan (satu deret per bulan) dari peta {tanggal => total rupiah}.
+     *
+     * Bulan diturunkan di PHP (portable MySQL/SQLite). Dipakai chart total & per produk.
+     *
+     * @param  Collection<string, mixed>  $perTanggal
+     * @return list<array<string, mixed>>
+     */
+    private function seriBulanan(Collection $perTanggal): array
+    {
+        return collect($perTanggal)
             ->mapWithKeys(fn ($total, $tgl) => [Carbon::parse($tgl)->toDateString() => $total])
-            // preserveKeys wajib: key-nya tanggal, dan masih dipakai di map di bawah.
+            // preserveKeys wajib: key-nya tanggal, masih dipakai di map di bawah.
             ->groupBy(fn ($total, string $tgl) => (int) Carbon::parse($tgl)->month, preserveKeys: true)
             ->map(fn (Collection $bulanan, int $bulan) => [
                 'bulan' => $bulan,
@@ -176,11 +224,6 @@ class SimpananService
             ->sortKeys()
             ->values()
             ->all();
-
-        return [
-            'tahun' => $posisi->year,
-            'seri' => $seri,
-        ];
     }
 
     /** @var array<int, string> */

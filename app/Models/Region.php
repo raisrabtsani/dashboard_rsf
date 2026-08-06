@@ -9,17 +9,17 @@ use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 class Region extends Model
 {
     /**
-     * ID entitas rollup Region Office — SUMBER TUNGGAL angka 855.
+     * ID entitas rollup Region Office — SUMBER TUNGGAL id KANWIL.
      *
-     * Selain jadi baris di tabel `region`, id ini juga dibuatkan baris bayangan
-     * di tabel `cabang` dan `uker` supaya data yang dikelola di level Region
-     * (mis. Pinjaman segmen Medium) lolos validasi foreign key. Baris bayangan
-     * itu disembunyikan dari dropdown & tabel tampilan — lihat scope
-     * `tanpaRegionOffice()` di model Cabang dan Uker.
+     * Data Region 7 Jakarta 2 memakai id 317 (KANWIL JAKARTA 2). Nilai ini juga
+     * dipakai untuk baris bayangan di tabel `cabang` & `uker` agar data level
+     * Region (mis. Pinjaman segmen Medium) lolos validasi foreign key, lalu
+     * disembunyikan dari dropdown & tabel lewat scope `tanpaRegionOffice()`.
      *
-     * Jangan menulis 855 sebagai angka literal di tempat lain.
+     * Jangan menulis id ini sebagai angka literal di tempat lain — selalu rujuk
+     * konstanta ini. (Kalau data region berganti, ubah cukup di sini.)
      */
-    public const OFFICE_ID = 855;
+    public const OFFICE_ID = 317;
 
     protected $table = 'region';
 

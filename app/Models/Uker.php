@@ -61,12 +61,17 @@ class Uker extends Model
         $nama = trim($namaUker);
 
         return match (true) {
+            // Kantor Cabang Pembantu (data Jakarta 2) — unit di bawah KC.
+            Str::startsWith($nama, 'KCP') => self::TIPE_UNIT,
+            // Kantor Cabang non-kepala yang tergabung di KANWIL.
+            Str::startsWith($nama, 'KC ') => self::TIPE_BO,
             Str::startsWith($nama, 'SBO ') => self::TIPE_SBO,
             Str::startsWith($nama, 'Unit ') => self::TIPE_UNIT,
             Str::startsWith($nama, 'KK ') => self::TIPE_KK,
             Str::contains($nama, 'SBO', ignoreCase: true) => self::TIPE_SBO,
             Str::contains($nama, 'Unit', ignoreCase: true) => self::TIPE_UNIT,
             Str::contains($nama, 'KK', ignoreCase: true) => self::TIPE_KK,
+            Str::contains($nama, 'KANWIL', ignoreCase: true) => self::TIPE_REGION,
             default => null,
         };
     }
