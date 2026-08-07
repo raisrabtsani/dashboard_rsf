@@ -147,8 +147,19 @@ class RecoveryService
         $posisi = Carbon::parse($tanggalData ?? $tanggalDiminta->toDateString())->startOfDay();
         $segmenDipilih = $this->scopeToSegmen($scope);
 
+        // Enam seri seperti dashboard referensi:
+        // Desember tahun sebelumnya + lima bulan berjalan sampai bulan posisi.
+        $periode = collect(range(0, 4))
+            ->map(fn (int $mundur) => $posisi->copy()->subMonthsNoOverflow($mundur)->format('Y-m'))
+            ->push($posisi->copy()->subYear()->month(12)->format('Y-m'))
+            ->unique()
+            ->sort()
+            ->values();
+
+        $awal = Carbon::createFromFormat('Y-m-d', ((string) $periode->first()).'-01')->startOfDay();
+
         $rows = $this->dasar($areaId, $cabangId, $ukerId)
-            ->whereBetween('tanggal', [$posisi->copy()->startOfYear()->toDateString(), $posisi->toDateString()])
+            ->whereBetween('tanggal', [$awal->toDateString(), $posisi->toDateString()])
             ->groupBy('tanggal', 'segmen')
             ->orderBy('tanggal')
             ->selectRaw('tanggal, segmen, SUM(actual) as total')
@@ -162,19 +173,27 @@ class RecoveryService
                 return $segmenDipilih === null
                     ? array_sum($dilipat)
                     : (float) ($dilipat[$segmenDipilih] ?? 0.0);
-            });
+            })
+            ->filter(fn ($total, string $tgl) => $periode->contains(Carbon::parse($tgl)->format('Y-m')));
 
         $seri = $harian
-            ->groupBy(fn ($total, string $tgl) => (int) Carbon::parse($tgl)->month, preserveKeys: true)
-            ->map(fn (Collection $bulanan, int $bulan) => [
-                'bulan' => $bulan,
-                'nama' => self::NAMA_BULAN[$bulan],
-                'titik' => $bulanan->map(fn ($total, string $tgl) => [
-                    'tanggal' => $tgl,
-                    'hari' => (int) Carbon::parse($tgl)->day,
-                    'nilai' => Satuan::toJuta($total),
-                ])->values()->all(),
-            ])
+            ->groupBy(fn ($total, string $tgl) => Carbon::parse($tgl)->format('Y-m'), preserveKeys: true)
+            ->map(function (Collection $bulanan, string $periodeKey) {
+                $periodeTanggal = Carbon::createFromFormat('Y-m', $periodeKey)->startOfMonth();
+                $bulan = (int) $periodeTanggal->month;
+
+                return [
+                    'periode' => $periodeKey,
+                    'tahun' => (int) $periodeTanggal->year,
+                    'bulan' => $bulan,
+                    'nama' => self::NAMA_BULAN[$bulan],
+                    'titik' => $bulanan->map(fn ($total, string $tgl) => [
+                        'tanggal' => $tgl,
+                        'hari' => (int) Carbon::parse($tgl)->day,
+                        'nilai' => Satuan::toJuta($total),
+                    ])->values()->all(),
+                ];
+            })
             ->sortKeys()
             ->values()
             ->all();

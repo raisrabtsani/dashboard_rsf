@@ -216,27 +216,6 @@ class PinjamanImportTest extends TestCase
         $this->assertSame(100_000_000.0, (float) $baris->target);
     }
 
-    public function test_rka_menerima_format_segmentasi_produk_dan_kualitas_os(): void
-    {
-        $isi = "id_cabang,id_uker,Segmentasi,Produk,Kualitas,          Target          ,Bulan,Tahun\n"
-            .self::CABANG.','.self::UKER.",Micro,Kupedes Komersial,OS,100000000,Januari,2026\n"
-            .self::CABANG.','.self::UKER.",Konsumer,KPR,NPL,20000000,Januari,2026\n";
-
-        $this->unggahRka($isi)->assertOk();
-
-        $os = RkaPinjaman::query()->where('kualitas', RkaPinjaman::KUALITAS_OS)->sole();
-        $npl = RkaPinjaman::query()->where('kualitas', Pinjaman::KUALITAS_NPL)->sole();
-
-        $this->assertSame('Micro', $os->segmen);
-        $this->assertSame('Kupedes Komersial', $os->segmentasi);
-        $this->assertSame(1, $os->bulan);
-        $this->assertSame(100_000_000.0, (float) $os->target);
-
-        // Istilah sumber "Konsumer" disamakan dengan segmen aktual "Consumer".
-        $this->assertSame('Consumer', $npl->segmen);
-        $this->assertSame('KPR', $npl->segmentasi);
-    }
-
     public function test_rka_melewati_target_kosong(): void
     {
         $isi = "id_cabang,id_uker,segmen,segmentasi,kualitas,tahun,bulan,target\n"

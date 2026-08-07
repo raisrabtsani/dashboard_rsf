@@ -1,0 +1,121 @@
+--- a/app/Services/PinjamanService.php
++++ b/app/Services/PinjamanService.php
+@@ -189,30 +189,30 @@
+         $tab = $this->tab($tab);
+         $posisi = Carbon::parse($tanggal)->startOfDay();
+ 
++        // Samakan pola trend per segmen dengan DPK: Desember tahun sebelumnya
++        // + 5 bulan terakhir sampai bulan posisi.
++        $rentang = [
++            $posisi->copy()->subYear()->month(12)->startOfMonth()->toDateString(),
++            $posisi->toDateString(),
++        ];
++
+         $baris = $this->dasar($tab, $areaId, $cabangId, $ukerId)
+-            ->whereBetween('tanggal', [$posisi->copy()->startOfMonth()->toDateString(), $posisi->toDateString()])
++            ->whereBetween('tanggal', $rentang)
+             ->groupBy('tanggal', 'segmen')
+             ->orderBy('tanggal')
+             ->selectRaw('tanggal, segmen, SUM(baki_debet) as total')
+             ->get();
+ 
+-        $tanggalUnik = $baris->map(fn ($r) => Carbon::parse($r->tanggal)->toDateString())->unique()->sort()->values();
+-
+         $seri = $baris
+             ->groupBy('segmen')
+-            ->map(function (Collection $rows, string $segmen) use ($tanggalUnik) {
++            ->map(function (Collection $rows, string $segmen) {
+                 $perTanggal = $rows->mapWithKeys(
+                     fn ($r) => [Carbon::parse($r->tanggal)->toDateString() => (float) $r->total],
+                 );
+ 
+                 return [
+                     'segmen' => $segmen,
+-                    // Tanggal tanpa data tetap null, bukan 0 — garis terputus,
+-                    // tidak jatuh ke sumbu.
+-                    'titik' => $tanggalUnik->map(fn (string $t) => [
+-                        'tanggal' => $t,
+-                        'nilai' => isset($perTanggal[$t]) ? Satuan::toJuta($perTanggal[$t]) : null,
+-                    ])->all(),
++                    'seri' => $this->perBulan(collect($perTanggal)),
+                 ];
+             })
+             ->sortKeys()
+@@ -221,7 +221,6 @@
+ 
+         return [
+             'tab' => $tab,
+-            'tanggal' => $tanggalUnik->all(),
+             'seri' => $seri,
+         ];
+     }
+--- a/resources/js/Pages/PinjamanDashboard/Index.vue
++++ b/resources/js/Pages/PinjamanDashboard/Index.vue
+@@ -186,26 +186,44 @@
+ };
+ 
+ function chartSegmenData(segmen) {
+-    const sumber = grafikSegmen[tabTrendSegmen.value];
+-    const seri = (sumber?.seri ?? []).find(
++    const sumber = grafikSegmen[tabTrendSegmen.value]?.seri ?? [];
++    const dataSegmen = sumber.find(
+         (item) => String(item.segmen).toLowerCase() === String(segmen).toLowerCase(),
+     );
+ 
+-    if (!seri) return null;
+-
+-    const labels = (sumber?.tanggal ?? []).map((tanggal) => String(Number(String(tanggal).slice(-2))));
++    if (!dataSegmen?.seri?.length) return null;
++
++    const periode = periodeTrend();
++    const labels = Array.from({ length: 31 }, (_, i) => String(i + 1));
++    const warnaTrend = ['#7c8ea6', '#5f95ff', '#31c48d', '#f0ad32', '#ff6b6b', '#14b8d4'];
++    const namaBulan = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
+ 
+     return {
+         labels,
+-        datasets: [
+-            {
+-                label: tabTrendSegmen.value === 'total' ? 'Total' : tabTrendSegmen.value.toUpperCase(),
+-                borderColor: WARNA_TREND[tabTrendSegmen.value],
+-                backgroundColor: WARNA_TREND[tabTrendSegmen.value],
+-                data: seri.titik.map((titik) => titik.nilai ?? null),
+-                spanGaps: false,
+-            },
+-        ],
++        datasets: periode
++            .map((p, idx) => {
++                const dataSeri = dataSegmen.seri.find(
++                    (s) => Number(s.tahun) === p.tahun && Number(s.bulan) === p.bulan,
++                );
++                if (!dataSeri) return null;
++
++                const terakhir = idx === periode.length - 1;
++                const warna = warnaTrend[idx] ?? WARNA_TREND[tabTrendSegmen.value];
++
++                return {
++                    label: `${namaBulan[p.bulan - 1]} ${p.tahun}`,
++                    borderColor: warna,
++                    backgroundColor: warna,
++                    data: labels.map((h) => dataSeri?.titik?.find((t) => t.hari === Number(h))?.nilai ?? null),
++                    spanGaps: false,
++                    borderDash: terakhir ? [] : [5, 5],
++                    borderWidth: terakhir ? 3 : 2,
++                    pointRadius: 0,
++                    pointHoverRadius: terakhir ? 4 : 3,
++                    fill: false,
++                };
++            })
++            .filter(Boolean),
+     };
+ }
+ 
+@@ -747,6 +765,8 @@
+                                 v-if="chartSegmenData(s.segmen)"
+                                 :labels="chartSegmenData(s.segmen).labels"
+                                 :datasets="chartSegmenData(s.segmen).datasets"
++                                variant="monthly-trend"
++                                :show-last-value-tag="true"
+                             />
+                             <p v-else class="pt-16 text-center text-xs text-slate-400">Tidak ada data.</p>
+                         </div>

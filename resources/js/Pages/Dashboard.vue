@@ -24,6 +24,13 @@ const props = defineProps({
 const scope = useScope();
 const user = computed(() => usePage().props.auth?.user ?? null);
 
+// Nama pada banner Overview selalu mengikuti nama akun yang sedang login.
+// Nilai ini tidak mengikuti filter Area/Cabang/Unit Kerja, sehingga tetap statis
+// selama sesi login user tersebut.
+const namaAkunOverview = computed(() =>
+    String(user.value?.name ?? 'REGIONAL STRATEGY AND FINANCE').trim() || 'REGIONAL STRATEGY AND FINANCE',
+);
+
 const pending = reactive({
     area_id: props.filterAwal.area_id ?? null,
     cabang_id: props.filterAwal.cabang_id ?? null,
@@ -356,7 +363,7 @@ onMounted(async () => {
                     </div>
                     <div class="min-w-0">
                         <p class="text-xs font-semibold uppercase tracking-[0.22em] text-white/70 sm:text-sm">Selamat datang</p>
-                        <h1 class="mt-1.5 text-2xl font-extrabold leading-tight tracking-tight sm:text-3xl lg:text-[42px]">REGIONAL STRATEGY AND FINANCE</h1>
+                        <h1 class="mt-1.5 text-2xl font-extrabold uppercase leading-tight tracking-tight sm:text-3xl lg:text-[42px]">{{ namaAkunOverview }}</h1>
                         <div class="mt-3 flex flex-wrap items-center gap-3 text-sm">
                             <span class="inline-flex max-w-full items-center truncate rounded-xl bg-white/15 px-3 py-1 text-xs font-semibold text-white shadow-sm backdrop-blur sm:text-sm">
                                 {{ userUnitKerjaBadge }}

@@ -1,0 +1,210 @@
+diff --git a/app/Services/PinjamanService.php b/app/Services/PinjamanService.php
+index f61f5a5..fcc7201 100644
+--- a/app/Services/PinjamanService.php
++++ b/app/Services/PinjamanService.php
+@@ -381,17 +381,30 @@ class PinjamanService
+             ->selectRaw("{$kolom} as entitas_id, SUM(target) as total")
+             ->pluck('total', 'entitas_id');
+ 
+-        $nama = $perUker
+-            ? Uker::query()->whereIn('id', $aktual->keys())->pluck('nama', 'id')
+-            : Cabang::query()->whereIn('id', $aktual->keys())->pluck('nama', 'id');
+-
+-        $baris = $aktual->map(function ($total, $entitasId) use ($target, $nama) {
++        $entitas = $perUker
++            ? Uker::query()
++                ->with(['cabang:id,nama,area_id', 'cabang.area:id,nama'])
++                ->whereIn('id', $aktual->keys())
++                ->get(['id', 'cabang_id', 'nama'])
++                ->keyBy('id')
++            : Cabang::query()
++                ->with('area:id,nama')
++                ->whereIn('id', $aktual->keys())
++                ->get(['id', 'area_id', 'nama'])
++                ->keyBy('id');
++
++        $baris = $aktual->map(function ($total, $entitasId) use ($target, $entitas, $perUker) {
+             $rka = (float) ($target[$entitasId] ?? 0);
+             $nilai = (float) $total;
++            $detail = $entitas->get((int) $entitasId);
++            $cabang = $perUker ? $detail?->cabang : $detail;
+ 
+             return [
+                 'id' => (int) $entitasId,
+-                'nama' => $nama[$entitasId] ?? (string) $entitasId,
++                'nama' => $detail?->nama ?? (string) $entitasId,
++                'cabang' => $perUker ? $cabang?->nama : null,
++                'area_head_id' => $cabang?->area_id,
++                'area_head' => $cabang?->area?->nama,
+                 'nilai' => Satuan::toJuta($nilai),
+                 'target' => Satuan::toJuta($rka),
+                 'pencapaian' => $rka > 0 ? round($nilai / $rka * 100, 2) : null,
+diff --git a/resources/js/Pages/PinjamanDashboard/Index.vue b/resources/js/Pages/PinjamanDashboard/Index.vue
+index 7a1becc..dc731f4 100644
+--- a/resources/js/Pages/PinjamanDashboard/Index.vue
++++ b/resources/js/Pages/PinjamanDashboard/Index.vue
+@@ -86,7 +86,7 @@ const branchData = reactive({
+ });
+ 
+ const memuat = reactive({ kartu: false, chart: false, segmen: false, produk: false, tabel: false });
+-const drilldown = ref(null);
++const rankingFilter = reactive({ area_id: null, segmentasi: null });
+ const tabTrendSegmen = ref('total');
+ const tabProduk = ref('total');
+ const tabCabang = ref(props.tabAwal ?? 'total');
+@@ -350,6 +350,14 @@ function formatBranchGap(nilai) {
+     return branchRatio.value ? formatDeltaPct(nilai) : formatDelta(nilai);
+ }
+ 
++function deskripsiEntitas(baris) {
++    const rincian = [];
++    if (branch.value?.grouping === 'uker' && baris?.cabang) rincian.push(`Cabang: ${baris.cabang}`);
++    rincian.push(baris?.area_head ? `Area Head: ${baris.area_head}` : 'Area Head belum dipetakan');
++
++    return rincian.join(' • ');
++}
++
+ function nilaiDeltaCabang(baris, key) {
+     const data = baris?.[key];
+     if (data && typeof data === 'object') return data.nilai ?? null;
+@@ -404,6 +412,13 @@ function resetFilter() {
+     pending.tanggal = props.tanggalAwal;
+ }
+ 
++const rankingFilterKosong = computed(() => !rankingFilter.area_id && !rankingFilter.segmentasi);
++
++function resetRankingFilter() {
++    rankingFilter.area_id = null;
++    rankingFilter.segmentasi = null;
++}
++
+ async function muatOpsi() {
+     const data = await fetchFilterOptions({ area_id: applied.area_id, cabang_id: applied.cabang_id });
+     opsi.area = data.area ?? [];
+@@ -463,7 +478,10 @@ async function muatTabel() {
+     try {
+         const filter = {
+             ...applied,
+-            cabang_id: drilldown.value ?? applied.cabang_id,
++            // Filter ranking bersifat lokal untuk tabel. Saat kosong, tabel
++            // tetap mengikuti filter utama dashboard.
++            area_id: rankingFilter.area_id ?? applied.area_id,
++            segmentasi: rankingFilter.segmentasi ?? applied.segmentasi,
+         };
+ 
+         const [total, sml, npl] = await Promise.all([
+@@ -484,7 +502,6 @@ const muatSemua = () => Promise.all([muatKartuChart(), muatProduk(), muatTabel()
+ 
+ async function terapkan() {
+     Object.assign(applied, pending);
+-    drilldown.value = null;
+     await muatOpsi();
+     await muatSemua();
+ }
+@@ -507,7 +524,10 @@ watch(
+     },
+ );
+ 
+-watch(drilldown, () => muatTabel());
++watch(
++    () => [rankingFilter.area_id, rankingFilter.segmentasi],
++    () => muatTabel(),
++);
+ 
+ onMounted(async () => {
+     await muatOpsi();
+@@ -904,18 +924,37 @@ onMounted(async () => {
+                     </div>
+                     <div class="flex flex-wrap items-end gap-2">
+                         <label class="block">
+-                            <span class="mini-filter-label">Area / Uker</span>
+-                            <select v-model="drilldown" class="mini-filter-control">
++                            <span class="mini-filter-label">Area Head</span>
++                            <select
++                                v-model="rankingFilter.area_id"
++                                class="mini-filter-control"
++                                :disabled="Boolean(applied.cabang_id || applied.uker_id)"
++                            >
+                                 <option :value="null">Semua Area Head</option>
+-                                <option v-for="c in opsi.cabang" :key="c.id" :value="c.id">{{ c.nama }}</option>
++                                <option v-for="a in opsi.area" :key="a.id" :value="a.id">{{ a.nama }}</option>
+                             </select>
+                         </label>
+                         <label class="block">
+                             <span class="mini-filter-label">Segmentasi</span>
+-                            <select class="mini-filter-control text-slate-500" disabled>
+-                                <option>Semua Segmentasi</option>
++                            <select v-model="rankingFilter.segmentasi" class="mini-filter-control">
++                                <option :value="null">Semua Segmentasi</option>
++                                <option v-for="segmentasi in opsi.segmentasi" :key="segmentasi" :value="segmentasi">
++                                    {{ segmentasi }}
++                                </option>
+                             </select>
+                         </label>
++                        <button
++                            type="button"
++                            class="inline-flex h-8 items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-[8px] font-bold text-slate-500 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
++                            :disabled="rankingFilterKosong"
++                            @click="resetRankingFilter"
++                        >
++                            <svg class="h-3 w-3" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
++                                <path d="M4 5v4h4M16 15v-4h-4" />
++                                <path d="M5.6 14.4A7 7 0 0115 5.7M14.4 5.6A7 7 0 015 14.3" />
++                            </svg>
++                            Reset
++                        </button>
+                         <div class="inline-flex h-8 items-center rounded-lg bg-slate-100 p-0.5">
+                             <button
+                                 v-for="tab in CABANG_TABS"
+@@ -955,7 +994,7 @@ onMounted(async () => {
+                                 <td class="px-3 py-2 text-center text-slate-400">{{ i + 1 }}</td>
+                                 <td class="px-3 py-2">
+                                     <p class="font-bold text-slate-700">{{ b.nama }}</p>
+-                                    <p class="mt-0.5 text-[8px] font-medium text-blue-500">Area Jakarta</p>
++                                    <p class="mt-0.5 text-[8px] font-medium text-blue-500">{{ deskripsiEntitas(b) }}</p>
+                                 </td>
+                                 <td class="px-3 py-2 text-right font-bold tabular-nums text-slate-700">{{ formatBranchNilai(b.nilai) }}</td>
+                                 <td class="px-3 py-2 text-right tabular-nums text-slate-500">{{ formatBranchNilai(b.target) }}</td>
+diff --git a/tests/Feature/PinjamanDashboardTest.php b/tests/Feature/PinjamanDashboardTest.php
+index 7d5e8da..76f67aa 100644
+--- a/tests/Feature/PinjamanDashboardTest.php
++++ b/tests/Feature/PinjamanDashboardTest.php
+@@ -400,6 +400,38 @@ class PinjamanDashboardTest extends TestCase
+         $this->assertNotContains(Region::OFFICE_ID, collect($data['baris'])->pluck('id')->all());
+     }
+ 
++    public function test_ranking_cabang_menyertakan_deskripsi_area_head(): void
++    {
++        $data = $this->actingAs($this->admin())
++            ->getJson('/api/pinjaman/branch-pencapaian?tanggal='.self::POSISI.'&tab=total')
++            ->assertOk()
++            ->json();
++
++        $bogor = collect($data['baris'])->firstWhere('id', self::CABANG_A);
++
++        $this->assertNotNull($bogor);
++        $this->assertArrayHasKey('area_head_id', $bogor);
++        $this->assertArrayHasKey('area_head', $bogor);
++        $this->assertNotEmpty($bogor['area_head']);
++    }
++
++    public function test_filter_segmentasi_ranking_hanya_menampilkan_segmen_terpilih(): void
++    {
++        $data = $this->actingAs($this->admin())
++            ->getJson('/api/pinjaman/branch-pencapaian?'.http_build_query([
++                'tanggal' => self::POSISI,
++                'tab' => 'total',
++                'segmentasi' => 'Micro',
++            ]))
++            ->assertOk()
++            ->json();
++
++        $ids = collect($data['baris'])->pluck('id')->all();
++
++        $this->assertContains(self::CABANG_A, $ids);
++        $this->assertNotContains(self::CABANG_B, $ids);
++    }
++
+     // --- Scoping ------------------------------------------------------------
+ 
+     public function test_user_bo_yang_meminta_cabang_lain_tetap_menerima_angka_cabangnya(): void

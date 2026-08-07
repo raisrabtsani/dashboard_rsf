@@ -1,0 +1,893 @@
+diff --git a/app/Http/Controllers/Admin/UploadPinjamanController.php b/app/Http/Controllers/Admin/UploadPinjamanController.php
+index 3b14bcf..d97f2b8 100644
+--- a/app/Http/Controllers/Admin/UploadPinjamanController.php
++++ b/app/Http/Controllers/Admin/UploadPinjamanController.php
+@@ -41,6 +41,7 @@ class UploadPinjamanController extends Controller
+         ]);
+ 
+         $berkas = $request->file('berkas');
++        $this->siapkanProsesBesar();
+ 
+         try {
+             $hasil = $this->service->validasi($berkas->getRealPath(), $berkas->getClientOriginalName());
+@@ -70,6 +71,7 @@ class UploadPinjamanController extends Controller
+         ]);
+ 
+         $berkas = $request->file('berkas');
++        $this->siapkanProsesBesar();
+ 
+         try {
+             $hasil = $this->service->impor($berkas->getRealPath(), $berkas->getClientOriginalName());
+@@ -80,12 +82,22 @@ class UploadPinjamanController extends Controller
+         }
+ 
+         $pesan = sprintf(
+-            '%s baris masuk untuk tanggal %s (segmen: %s).',
++            '%s baris agregat tersimpan dari %s baris valid sumber untuk tanggal %s (segmen: %s).',
+             number_format($hasil['baris'], 0, ',', '.'),
++            number_format($hasil['baris_sumber'] ?? $hasil['baris'], 0, ',', '.'),
+             implode(', ', $hasil['tanggal']),
+             implode(', ', $hasil['segmen']),
+         );
+ 
++        $tidakValid = (int) ($hasil['laporan']['tidak_valid'] ?? 0);
++
++        if ($tidakValid > 0) {
++            $pesan .= sprintf(
++                ' %s baris tidak valid tidak diimpor.',
++                number_format($tidakValid, 0, ',', '.'),
++            );
++        }
++
+         if ($hasil['dilewati'] > 0) {
+             $pesan .= sprintf(
+                 ' %s baris dilewati karena kombinasi tanggal + segmennya sudah ada.',
+@@ -96,6 +108,17 @@ class UploadPinjamanController extends Controller
+         return response()->json(['message' => $pesan, 'hasil' => $hasil]);
+     }
+ 
++    /**
++     * File Pinjaman dari Tableau dapat berisi ratusan ribu baris. Beri waktu
++     * proses yang cukup tanpa mengubah konfigurasi global PHP.
++     */
++    private function siapkanProsesBesar(): void
++    {
++        if (function_exists('set_time_limit')) {
++            @set_time_limit(900);
++        }
++    }
++
+     private function gagalTakTerduga(Throwable $e, string $tahap): JsonResponse
+     {
+         report($e);
+diff --git a/app/Services/Concerns/MelaporkanImport.php b/app/Services/Concerns/MelaporkanImport.php
+index ccfdd87..0e43b77 100644
+--- a/app/Services/Concerns/MelaporkanImport.php
++++ b/app/Services/Concerns/MelaporkanImport.php
+@@ -14,11 +14,35 @@ use Throwable;
+  */
+ trait MelaporkanImport
+ {
++    /**
++     * Detail error dibatasi agar respons preview tidak menjadi ratusan MB saat
++     * file sumber mempunyai ratusan ribu baris kosong/tidak valid.
++     */
++    private const BATAS_DETAIL_ERROR_IMPORT = 1000;
++
+     private int $totalBarisSumber = 0;
+ 
++    private int $jumlahBarisTidakValid = 0;
++
+     /** @var list<array{baris:int|null,pesan:string,data:array<string,mixed>}> */
+     private array $barisTidakValid = [];
+ 
++    /**
++     * Mulai laporan baru. Dipakai importer biasa maupun importer streaming.
++     */
++    protected function mulaiLaporanImport(int $totalBarisSumber = 0): void
++    {
++        $this->totalBarisSumber = $totalBarisSumber;
++        $this->jumlahBarisTidakValid = 0;
++        $this->barisTidakValid = [];
++    }
++
++    /** Tambahkan jumlah baris sumber ketika pembacaan dilakukan streaming. */
++    protected function tambahTotalBarisSumber(int $jumlah = 1): void
++    {
++        $this->totalBarisSumber += $jumlah;
++    }
++
+     /**
+      * @template T
+      * @param  Collection<int, array<string, mixed>>  $baris
+@@ -27,8 +51,7 @@ trait MelaporkanImport
+      */
+     protected function petakanBarisAman(Collection $baris, callable $mapper): Collection
+     {
+-        $this->totalBarisSumber = $baris->count();
+-        $this->barisTidakValid = [];
++        $this->mulaiLaporanImport($baris->count());
+         $valid = collect();
+ 
+         foreach ($baris as $i => $row) {
+@@ -58,6 +81,12 @@ trait MelaporkanImport
+      */
+     protected function catatBarisTidakValid(array $data, ?int $baris, string $pesan): void
+     {
++        $this->jumlahBarisTidakValid++;
++
++        if (count($this->barisTidakValid) >= self::BATAS_DETAIL_ERROR_IMPORT) {
++            return;
++        }
++
+         $pesan = preg_replace('/^Baris\s+\d+\s*:\s*/i', '', trim($pesan)) ?: trim($pesan);
+ 
+         $this->barisTidakValid[] = [
+@@ -79,17 +108,27 @@ trait MelaporkanImport
+     }
+ 
+     /**
+-     * @return array{total_baris:int,valid:int,tidak_valid:int,error:list<array{baris:int|null,pesan:string,data:array<string,mixed>}>}
++     * @return array{
++     *   total_baris:int,
++     *   valid:int,
++     *   tidak_valid:int,
++     *   error:list<array{baris:int|null,pesan:string,data:array<string,mixed>}>,
++     *   detail_error_ditampilkan:int,
++     *   detail_error_dibatasi:bool
++     * }
+      */
+     protected function laporanImport(): array
+     {
+-        $invalid = count($this->barisTidakValid);
++        $invalid = $this->jumlahBarisTidakValid;
++        $detail = count($this->barisTidakValid);
+ 
+         return [
+             'total_baris' => $this->totalBarisSumber,
+             'valid' => max(0, $this->totalBarisSumber - $invalid),
+             'tidak_valid' => $invalid,
+             'error' => $this->barisTidakValid,
++            'detail_error_ditampilkan' => $detail,
++            'detail_error_dibatasi' => $invalid > $detail,
+         ];
+     }
+ }
+diff --git a/app/Services/PinjamanCsvImportService.php b/app/Services/PinjamanCsvImportService.php
+index efcbb43..11d1ac7 100644
+--- a/app/Services/PinjamanCsvImportService.php
++++ b/app/Services/PinjamanCsvImportService.php
+@@ -3,15 +3,18 @@
+ namespace App\Services;
+ 
+ use App\Exceptions\ImportException;
+-use App\Services\Concerns\MelaporkanImport;
+ use App\Models\Pinjaman;
+ use App\Models\Uker;
++use App\Services\Concerns\MelaporkanImport;
++use App\Support\Csv;
+ use App\Support\PetaKolom;
+ use App\Support\Satuan;
+ use App\Support\Spreadsheet;
++use Illuminate\Database\Schema\Blueprint;
+ use Illuminate\Support\Carbon;
+ use Illuminate\Support\Collection;
+ use Illuminate\Support\Facades\DB;
++use Illuminate\Support\Facades\Schema;
+ use Throwable;
+ 
+ /**
+@@ -21,16 +24,20 @@ use Throwable;
+  *   id_cabang | id_uker | SEGMEN_2025 | Segmentasi | Kualitas Kredit |
+  *   Baki Debet | Month, Day, Year of Posisi
+  *
+- * BEDA PENTING dari importer Simpanan: proteksi duplikat dihitung per
+- * (tanggal, SEGMEN), bukan per tanggal saja. Segmen baru — mis. Menengah yang
+- * dikelola Region — kerap datang menyusul di berkas terpisah untuk tanggal yang
+- * sudah ada. Memblokir seluruh berkas hanya karena tanggalnya sudah ada akan
+- * membuat segmen baru itu mustahil dimasukkan tanpa menghapus data yang benar.
++ * CSV ekspor Excel/Tableau dapat berukuran ratusan ribu baris dan ber-encoding
++ * UTF-16. Karena itu CSV diproses bertahap, bukan dimuat seluruhnya ke memori.
++ * Baris sumber yang memiliki kunci sama dijumlahkan sebelum disimpan agar nilai
++ * tidak hilang akibat unique key tabel pinjaman.
+  */
+ class PinjamanCsvImportService
+ {
+     use MelaporkanImport;
+ 
++    private const UKURAN_POTONGAN = 1000;
++
++    /** Nilai pengganti ketika kolom Segmentasi sumber memang kosong. */
++    private const SEGMENTASI_KOSONG = 'Tanpa Segmentasi';
++
+     /**
+      * @var array<string, list<string>>
+      */
+@@ -81,52 +88,93 @@ class PinjamanCsvImportService
+     /**
+      * Validasi berkas tanpa menyimpan ke database.
+      *
+-     * Baris yang salah dicatat satu per satu agar dapat diunduh sebagai CSV
+-     * error. Baris valid baru disimpan setelah user menekan tombol Upload Data.
+-     *
+-     * @return array{tanggal: list<string>, baris: int, segmen: list<string>, total: float, laporan: array<string,mixed>}
++     * @return array{tanggal:list<string>,baris:int,segmen:list<string>,total:float,laporan:array<string,mixed>}
+      */
+     public function validasi(string $path, ?string $namaAsli = null): array
+     {
+-        $baris = $this->baca($path, $namaAsli ?? basename($path));
+-
+-        return [
+-            'tanggal' => $baris->pluck('tanggal')->unique()->sort()->values()->all(),
+-            'baris' => $baris->count(),
+-            'segmen' => $baris->pluck('segmen')->unique()->sort()->values()->all(),
+-            'total' => (float) $baris->sum(fn (array $b) => $b['baki_debet']),
+-            'laporan' => $this->laporanImport(),
+-        ];
++        return $this->prosesBerkas(
++            $path,
++            $namaAsli ?? basename($path),
++        );
+     }
+ 
+     /**
+-     * @return array{tanggal: list<string>, baris: int, dilewati: int, segmen: list<string>, total: float}
++     * Impor memakai temporary table tanpa unique key. Setelah seluruh baris
++     * valid masuk staging, data digrup dan dijumlahkan lalu di-upsert ke tabel
++     * utama. Ini mencegah baris duplikat dalam sumber saling menimpa.
++     *
++     * @return array{tanggal:list<string>,baris:int,baris_sumber:int,dilewati:int,segmen:list<string>,total:float,laporan:array<string,mixed>}
+      */
+     public function impor(string $path, ?string $namaAsli = null): array
+     {
+-        $baris = $this->baca($path, $namaAsli ?? basename($path));
+-
+-        $masuk = $baris;
+-        $dilewati = collect();
+-
+-        DB::transaction(function () use ($masuk) {
+-            $masuk->chunk(1000)->each(
+-                fn (Collection $potongan) => Pinjaman::query()->upsert(
+-                    $potongan->values()->all(),
+-                    ['uker_id', 'segmen', 'segmentasi', 'kualitas', 'tanggal'],
+-                    ['cabang_id', 'baki_debet', 'updated_at'],
+-                ),
+-            );
+-        });
++        $namaBerkas = $namaAsli ?? basename($path);
++        $tabelSementara = 'tmp_pinjaman_import_'.bin2hex(random_bytes(6));
+ 
+-        return [
+-            'tanggal' => $masuk->pluck('tanggal')->unique()->sort()->values()->all(),
+-            'baris' => $masuk->count(),
+-            'dilewati' => $dilewati->count(),
+-            'segmen' => $masuk->pluck('segmen')->unique()->sort()->values()->all(),
+-            'total' => (float) $masuk->sum(fn (array $b) => $b['baki_debet']),
+-            'laporan' => $this->laporanImport(),
+-        ];
++        $this->buatTabelSementara($tabelSementara);
++
++        try {
++            return DB::transaction(function () use ($path, $namaBerkas, $tabelSementara) {
++                $hasil = $this->prosesBerkas(
++                    $path,
++                    $namaBerkas,
++                    function (array $potongan) use ($tabelSementara): void {
++                        if ($potongan !== []) {
++                            DB::table($tabelSementara)->insert($potongan);
++                        }
++                    },
++                );
++
++                $jumlahTersimpan = 0;
++
++                DB::table($tabelSementara)
++                    ->select([
++                        'uker_id',
++                        'segmen',
++                        'segmentasi',
++                        'kualitas',
++                        'tanggal',
++                    ])
++                    ->selectRaw('MAX(cabang_id) as cabang_id')
++                    ->selectRaw('SUM(baki_debet) as baki_debet')
++                    ->selectRaw('MIN(created_at) as created_at')
++                    ->selectRaw('MAX(updated_at) as updated_at')
++                    ->groupBy('uker_id', 'segmen', 'segmentasi', 'kualitas', 'tanggal')
++                    ->orderBy('uker_id')
++                    ->orderBy('segmen')
++                    ->orderBy('segmentasi')
++                    ->orderBy('kualitas')
++                    ->orderBy('tanggal')
++                    ->chunk(self::UKURAN_POTONGAN, function (Collection $baris) use (&$jumlahTersimpan): void {
++                        $data = $baris->map(fn (object $r) => [
++                            'cabang_id' => (int) $r->cabang_id,
++                            'uker_id' => (int) $r->uker_id,
++                            'segmen' => (string) $r->segmen,
++                            'segmentasi' => (string) $r->segmentasi,
++                            'kualitas' => (string) $r->kualitas,
++                            'tanggal' => Carbon::parse($r->tanggal)->toDateString(),
++                            'baki_debet' => (float) $r->baki_debet,
++                            'created_at' => $r->created_at,
++                            'updated_at' => $r->updated_at,
++                        ])->all();
++
++                        Pinjaman::query()->upsert(
++                            $data,
++                            ['uker_id', 'segmen', 'segmentasi', 'kualitas', 'tanggal'],
++                            ['cabang_id', 'baki_debet', 'updated_at'],
++                        );
++
++                        $jumlahTersimpan += count($data);
++                    });
++
++                $hasil['baris_sumber'] = $hasil['baris'];
++                $hasil['baris'] = $jumlahTersimpan;
++                $hasil['dilewati'] = 0;
++
++                return $hasil;
++            });
++        } finally {
++            Schema::dropIfExists($tabelSementara);
++        }
+     }
+ 
+     /**
+@@ -165,7 +213,7 @@ class PinjamanCsvImportService
+                 'id_cabang' => $p->cabang_id,
+                 'id_uker' => $p->uker_id,
+                 'SEGMEN_2025' => $p->segmen,
+-                'Segmentasi' => $p->segmentasi,
++                'Segmentasi' => $p->segmentasi === self::SEGMENTASI_KOSONG ? '' : $p->segmentasi,
+                 'Kualitas Kredit' => $p->kualitas,
+                 'Baki Debet' => $p->baki_debet,
+                 'Month, Day, Year of Posisi' => $p->tanggal,
+@@ -188,100 +236,198 @@ class PinjamanCsvImportService
+     }
+ 
+     /**
+-     * Pasangan (tanggal, segmen) yang sudah ada di database.
++     * Proses sumber secara bertahap. Callback menerima baris valid per potongan
++     * dan digunakan oleh proses upload untuk memasukkan data ke staging.
+      *
+-     * @param  Collection<int, array<string, mixed>>  $baris
+-     * @return Collection<int, string>
++     * @param  null|callable(list<array<string,mixed>>):void  $terimaPotongan
++     * @return array{tanggal:list<string>,baris:int,segmen:list<string>,total:float,laporan:array<string,mixed>}
+      */
+-    private function pasanganTanggalSegmenTersimpan(Collection $baris): Collection
++    private function prosesBerkas(string $path, string $namaBerkas, ?callable $terimaPotongan = null): array
+     {
+-        return Pinjaman::query()
+-            ->whereIn('tanggal', $baris->pluck('tanggal')->unique()->all())
+-            ->whereIn('segmen', $baris->pluck('segmen')->unique()->all())
+-            ->distinct()
+-            ->get(['tanggal', 'segmen'])
+-            ->map(fn ($r) => $this->kunci(Carbon::parse($r->tanggal)->toDateString(), $r->segmen))
+-            ->unique()
+-            ->values();
+-    }
++        $ukerValid = Uker::query()->pluck('cabang_id', 'id');
++        $now = Carbon::now();
++        $potongan = collect();
++        $adaBaris = false;
++        $jumlahValid = 0;
++        $total = 0.0;
++        $tanggal = [];
++        $segmen = [];
++
++        $this->mulaiLaporanImport();
++
++        $prosesPotongan = function () use (
++            &$potongan,
++            &$jumlahValid,
++            &$total,
++            &$tanggal,
++            &$segmen,
++            $ukerValid,
++            $now,
++            $namaBerkas,
++            $terimaPotongan,
++        ): void {
++            if ($potongan->isEmpty()) {
++                return;
++            }
+ 
+-    private function kunci(string $tanggal, string $segmen): string
+-    {
+-        return $tanggal.'|'.$segmen;
++            $dipetakan = PetaKolom::petakan(
++                $potongan,
++                self::ALIAS,
++                self::KOLOM_WAJIB,
++                $namaBerkas,
++            );
++
++            $valid = [];
++
++            foreach ($dipetakan as $i => $r) {
++                $nomor = ((int) $i) + 2;
++                $this->tambahTotalBarisSumber();
++
++                try {
++                    $baris = $this->normalisasiBaris($r, $nomor, $ukerValid, $now);
++
++                    $valid[] = $baris;
++                    $jumlahValid++;
++                    $total += (float) $baris['baki_debet'];
++                    $tanggal[$baris['tanggal']] = true;
++                    $segmen[$baris['segmen']] = true;
++                } catch (ImportException $e) {
++                    $this->catatBarisTidakValid($r, $nomor, $e->getMessage());
++                } catch (Throwable $e) {
++                    $this->catatBarisTidakValid($r, $nomor, $e->getMessage());
++                }
++            }
++
++            if ($terimaPotongan !== null && $valid !== []) {
++                $terimaPotongan($valid);
++            }
++
++            $potongan = collect();
++        };
++
++        foreach ($this->barisSumber($path, $namaBerkas) as $i => $baris) {
++            $adaBaris = true;
++            $potongan->put((int) $i, $baris);
++
++            if ($potongan->count() >= self::UKURAN_POTONGAN) {
++                $prosesPotongan();
++            }
++        }
++
++        $prosesPotongan();
++
++        if (! $adaBaris) {
++            throw ImportException::berkas("Berkas {$namaBerkas} tidak berisi baris data.");
++        }
++
++        $daftarTanggal = array_keys($tanggal);
++        $daftarSegmen = array_keys($segmen);
++        sort($daftarTanggal);
++        sort($daftarSegmen);
++
++        return [
++            'tanggal' => $daftarTanggal,
++            'baris' => $jumlahValid,
++            'segmen' => $daftarSegmen,
++            'total' => $total,
++            'laporan' => $this->laporanImport(),
++        ];
+     }
+ 
+     /**
+-     * @return Collection<int, array<string, mixed>>
++     * @return iterable<int, array<string, string>>
+      */
+-    private function baca(string $path, string $namaBerkas): Collection
++    private function barisSumber(string $path, string $namaBerkas): iterable
+     {
+-        $mentah = Spreadsheet::baca($path, namaAsli: $namaBerkas);
+-        $baris = PetaKolom::petakan($mentah, self::ALIAS, self::KOLOM_WAJIB, $namaBerkas);
+-
+-        $ukerValid = Uker::query()->pluck('cabang_id', 'id');
+-        $now = Carbon::now();
++        $ekstensi = strtolower(pathinfo($namaBerkas, PATHINFO_EXTENSION));
+ 
+-        return $this->petakanBarisAman($baris, function (array $r, int $i) use ($ukerValid, $now) {
+-            $nomor = $i + 2;
++        if (in_array($ekstensi, ['csv', 'txt'], true)) {
++            yield from Csv::baris($path, namaAsli: $namaBerkas);
+ 
+-            $idCabangSumber = trim((string) ($r['id_cabang'] ?? ''));
+-            $idUkerSumber = trim((string) ($r['id_uker'] ?? ''));
+-            $segmen = trim((string) ($r['segmen'] ?? ''));
+-            $segmentasi = trim((string) ($r['segmentasi'] ?? ''));
+-            $kualitas = trim((string) ($r['kualitas'] ?? ''));
++            return;
++        }
+ 
+-            if ($idCabangSumber === '') {
+-                return null;
+-            }
++        foreach (Spreadsheet::baca($path, namaAsli: $namaBerkas) as $i => $baris) {
++            yield $i => $baris;
++        }
++    }
+ 
+-            if (! ctype_digit($idCabangSumber)) {
+-                return null;
+-            }
++    /**
++     * @param  Collection<int, int>  $ukerValid
++     * @return array<string, mixed>
++     */
++    private function normalisasiBaris(array $r, int $nomor, Collection $ukerValid, Carbon $now): array
++    {
++        $idCabangSumber = trim((string) ($r['id_cabang'] ?? ''));
++        $idUkerSumber = trim((string) ($r['id_uker'] ?? ''));
++        $segmen = trim((string) ($r['segmen'] ?? ''));
++        $segmentasi = trim((string) ($r['segmentasi'] ?? ''));
++        $kualitas = trim((string) ($r['kualitas'] ?? ''));
++
++        if ($idCabangSumber === '' || ! ctype_digit($idCabangSumber)) {
++            throw ImportException::berkas("Baris {$nomor}: id_cabang '{$idCabangSumber}' tidak valid.");
++        }
+ 
+-            if ($idUkerSumber === '') {
+-                return null;
+-            }
++        if ($idUkerSumber === '' || ! ctype_digit($idUkerSumber)) {
++            throw ImportException::berkas("Baris {$nomor}: id_uker '{$idUkerSumber}' tidak valid.");
++        }
+ 
+-            if (! ctype_digit($idUkerSumber)) {
+-                return null;
+-            }
++        $ukerId = (int) $idUkerSumber;
+ 
+-            $ukerId = (int) $idUkerSumber;
++        if (! $ukerValid->has($ukerId)) {
++            throw ImportException::berkas("Baris {$nomor}: id_uker '{$ukerId}' tidak ditemukan di master unit kerja.");
++        }
+ 
+-            if (! $ukerValid->has($ukerId)) {
+-                return null;
+-            }
++        if ($segmen === '') {
++            throw ImportException::berkas("Baris {$nomor}: kolom SEGMEN_2025 kosong.");
++        }
+ 
+-            if ($segmen === '') {
+-                return null;
+-            }
++        // Pada ekspor sumber terdapat baris finansial yang valid tetapi dimensi
++        // Segmentasi kosong. Nilainya tetap harus masuk ke total dashboard.
++        if ($segmentasi === '') {
++            $segmentasi = self::SEGMENTASI_KOSONG;
++        }
+ 
+-            if ($segmentasi === '') {
+-                return null;
+-            }
++        if ($kualitas === '') {
++            throw ImportException::berkas("Baris {$nomor}: kolom Kualitas Kredit kosong.");
++        }
+ 
+-            if ($kualitas === '') {
+-                return null;
+-            }
++        if (! in_array($kualitas, Pinjaman::KUALITAS, true)) {
++            throw ImportException::berkas(
++                "Baris {$nomor}: kualitas '{$kualitas}' tidak dikenal. Gunakan: ".implode(', ', Pinjaman::KUALITAS).'.',
++            );
++        }
+ 
+-            if (! in_array($kualitas, Pinjaman::KUALITAS, true)) {
+-                throw ImportException::berkas(
+-                    "Baris {$nomor}: kualitas '{$kualitas}' tidak dikenal. Gunakan: ".implode(', ', Pinjaman::KUALITAS).'.',
+-                );
+-            }
++        return [
++            // Master adalah sumber kebenaran hubungan uker->cabang.
++            'cabang_id' => (int) $ukerValid[$ukerId],
++            'uker_id' => $ukerId,
++            'segmen' => $segmen,
++            'segmentasi' => $segmentasi,
++            'kualitas' => $kualitas,
++            'tanggal' => $this->tanggal($r['tanggal'] ?? '', $nomor),
++            'baki_debet' => $this->angka($r['baki_debet'] ?? '', $nomor),
++            'created_at' => $now,
++            'updated_at' => $now,
++        ];
++    }
+ 
+-            return [
+-                // Master adalah sumber kebenaran hubungan uker->cabang.
+-                'cabang_id' => $ukerValid[$ukerId],
+-                'uker_id' => $ukerId,
+-                'segmen' => $segmen,
+-                'segmentasi' => $segmentasi,
+-                'kualitas' => $kualitas,
+-                'tanggal' => $this->tanggal($r['tanggal'], $nomor),
+-                'baki_debet' => $this->angka($r['baki_debet'], $nomor),
+-                'created_at' => $now,
+-                'updated_at' => $now,
+-            ];
++    private function buatTabelSementara(string $nama): void
++    {
++        Schema::create($nama, function (Blueprint $table): void {
++            $table->temporary();
++            $table->unsignedInteger('cabang_id');
++            $table->unsignedInteger('uker_id');
++            $table->string('segmen', 30);
++            $table->string('segmentasi', 50);
++            $table->string('kualitas', 10);
++            $table->date('tanggal');
++            $table->decimal('baki_debet', 20, 2)->default(0);
++            $table->timestamps();
++            $table->index(
++                ['uker_id', 'segmen', 'segmentasi', 'kualitas', 'tanggal'],
++                'tmp_pinjaman_group_idx',
++            );
+         });
+     }
+ 
+diff --git a/app/Support/Csv.php b/app/Support/Csv.php
+index ba360de..0d67b7e 100644
+--- a/app/Support/Csv.php
++++ b/app/Support/Csv.php
+@@ -3,46 +3,61 @@
+ namespace App\Support;
+ 
+ use App\Exceptions\ImportException;
++use Generator;
+ use Illuminate\Support\Collection;
+ 
+ /**
+  * Pembaca CSV bersama untuk seeder & importer.
+  *
+- * Semua file master/import diekspor dari Excel dan ber-BOM UTF-8, jadi BOM di
+- * kolom pertama dibuang di sini — kalau tidak, nama kolom pertama terbaca
+- * sebagai "\u{FEFF}id_region" dan semua lookup meleset.
+- *
+- * Filosofinya gagal keras: file hilang, kosong, kolom wajib tidak ada, atau
+- * baris yang jumlah kolomnya tidak cocok akan melempar exception dengan pesan
+- * jelas — jangan sampai struktur file yang berubah menghasilkan tabel kosong
+- * secara diam-diam.
++ * File ekspor Excel/Tableau tidak selalu UTF-8. Beberapa berkas berukuran besar
++ * disimpan sebagai UTF-16 LE/BE dengan BOM. Pembacaan dilakukan melalui stream
++ * filter agar berkas tidak perlu dimuat seluruhnya ke memori hanya untuk
++ * dikonversi ke UTF-8.
+  */
+ class Csv
+ {
+     /**
+      * Baca CSV jadi koleksi array asosiatif berdasarkan baris header.
+      *
++     * Importer lama tetap dapat memakai API koleksi ini. Importer berkas besar
++     * sebaiknya memakai {@see baris()} agar pemrosesan berlangsung bertahap.
++     *
+      * @param  list<string>  $kolomWajib
+      * @return Collection<int, array<string, string>>
+      */
+     public static function baca(string $path, array $kolomWajib = [], ?string $namaAsli = null): Collection
++    {
++        return collect(iterator_to_array(
++            self::baris($path, $kolomWajib, $namaAsli),
++            preserve_keys: false,
++        ));
++    }
++
++    /**
++     * Baca CSV baris demi baris tanpa menampung seluruh isi berkas di memori.
++     *
++     * Encoding yang diterima:
++     * - UTF-8, dengan atau tanpa BOM;
++     * - UTF-16 LE dengan BOM;
++     * - UTF-16 BE dengan BOM.
++     *
++     * @param  list<string>  $kolomWajib
++     * @return Generator<int, array<string, string>>
++     */
++    public static function baris(string $path, array $kolomWajib = [], ?string $namaAsli = null): Generator
+     {
+         if (! is_file($path)) {
+             throw ImportException::berkas("File CSV tidak ditemukan: {$path}");
+         }
+ 
+-        $handle = fopen($path, 'r');
+-
+-        if ($handle === false) {
+-            throw ImportException::berkas("File CSV tidak bisa dibuka: {$path}");
+-        }
++        $handle = self::buka($path);
+ 
+         // Pesan error menyebut nama yang dikenal user, bukan nama berkas
+         // sementara PHP ("phpA1B2.tmp") yang tidak berarti apa-apa baginya.
+         $nama = $namaAsli ?? basename($path);
+         $header = null;
+-        $baris = collect();
+         $nomor = 0;
++        $indeks = 0;
+ 
+         try {
+             while (($kolom = fgetcsv($handle, escape: '')) !== false) {
+@@ -70,7 +85,15 @@ class Csv
+                     '',
+                 );
+ 
+-                $baris->push(array_combine($header, $kolom));
++                $gabungan = array_combine($header, $kolom);
++
++                if ($gabungan === false) {
++                    throw ImportException::berkas(
++                        "Baris {$nomor} di {$nama} tidak dapat dipetakan ke header CSV.",
++                    );
++                }
++
++                yield $indeks++ => $gabungan;
+             }
+         } finally {
+             fclose($handle);
+@@ -79,8 +102,69 @@ class Csv
+         if ($header === null) {
+             throw ImportException::berkas("File CSV kosong: {$path}");
+         }
++    }
++
++    /**
++     * Buka stream CSV dan ubah UTF-16 menjadi UTF-8 secara streaming.
++     *
++     * @return resource
++     */
++    private static function buka(string $path)
++    {
++        $handle = fopen($path, 'rb');
++
++        if ($handle === false) {
++            throw ImportException::berkas("File CSV tidak bisa dibuka: {$path}");
++        }
++
++        $awal = fread($handle, 4);
++
++        if ($awal === false) {
++            fclose($handle);
++
++            throw ImportException::berkas("File CSV tidak bisa dibaca: {$path}");
++        }
++
++        rewind($handle);
++
++        $encoding = null;
++        $panjangBom = 0;
++
++        if (str_starts_with($awal, "\xFF\xFE")) {
++            $encoding = 'UTF-16LE';
++            $panjangBom = 2;
++        } elseif (str_starts_with($awal, "\xFE\xFF")) {
++            $encoding = 'UTF-16BE';
++            $panjangBom = 2;
++        }
++
++        if ($encoding === null) {
++            return $handle;
++        }
++
++        // Lewati BOM sumber. Header UTF-8 hasil konversi jadi bersih dan fungsi
++        // fgetcsv dapat mengenali koma serta CRLF secara normal.
++        if (fseek($handle, $panjangBom) !== 0) {
++            fclose($handle);
++
++            throw ImportException::berkas("Posisi awal file CSV tidak dapat dibaca: {$path}");
++        }
++
++        $filter = @stream_filter_append(
++            $handle,
++            "convert.iconv.{$encoding}/UTF-8",
++            STREAM_FILTER_READ,
++        );
++
++        if ($filter === false) {
++            fclose($handle);
++
++            throw ImportException::berkas(
++                "CSV ber-encoding {$encoding} tidak dapat dikonversi. Pastikan ekstensi PHP iconv aktif.",
++            );
++        }
+ 
+-        return $baris;
++        return $handle;
+     }
+ 
+     /**
+@@ -88,7 +172,9 @@ class Csv
+      */
+     private static function barisKosong(array $kolom): bool
+     {
+-        return $kolom === [] || $kolom === [null] || (count($kolom) === 1 && trim((string) $kolom[0]) === '');
++        return $kolom === []
++            || $kolom === [null]
++            || collect($kolom)->every(fn (mixed $nilai) => trim((string) $nilai) === '');
+     }
+ 
+     /**
+@@ -98,8 +184,9 @@ class Csv
+      */
+     private static function header(array $kolom, array $kolomWajib, string $nama): array
+     {
+-        $kolom[0] = preg_replace('/^\x{FEFF}/u', '', (string) $kolom[0]);
+-        $header = array_map(trim(...), $kolom);
++        $pertama = (string) ($kolom[0] ?? '');
++        $kolom[0] = preg_replace('/^\x{FEFF}/u', '', $pertama) ?? $pertama;
++        $header = array_map(fn (mixed $nilai) => trim((string) $nilai), $kolom);
+         $header = self::gabungkanHeaderTanggalTableau($header);
+ 
+         $hilang = array_diff($kolomWajib, $header);
+diff --git a/resources/js/Components/Admin/ImportReportCard.vue b/resources/js/Components/Admin/ImportReportCard.vue
+index 13b7ab6..e03284a 100644
+--- a/resources/js/Components/Admin/ImportReportCard.vue
++++ b/resources/js/Components/Admin/ImportReportCard.vue
+@@ -11,6 +11,8 @@ const total = computed(() => Number(props.laporan?.total_baris ?? 0));
+ const valid = computed(() => Number(props.laporan?.valid ?? 0));
+ const invalid = computed(() => Number(props.laporan?.tidak_valid ?? 0));
+ const errors = computed(() => Array.isArray(props.laporan?.error) ? props.laporan.error : []);
++const detailDibatasi = computed(() => Boolean(props.laporan?.detail_error_dibatasi));
++const detailDitampilkan = computed(() => Number(props.laporan?.detail_error_ditampilkan ?? errors.value.length));
+ 
+ function csvCell(value) {
+     const text = String(value ?? '');
+@@ -64,10 +66,14 @@ function downloadError() {
+                 @click="downloadError"
+             >
+                 <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M9 2h2v8l3-3 1.4 1.4L10 13.8 4.6 8.4 6 7l3 3V2z"/><path d="M3 15h14v2H3z"/></svg>
+-                Download Error ({{ invalid.toLocaleString('id-ID') }})
++                Download Error ({{ detailDitampilkan.toLocaleString('id-ID') }}{{ detailDibatasi ? ' contoh' : '' }})
+             </button>
+         </div>
+ 
++        <p v-if="detailDibatasi" class="border-b border-amber-100 bg-amber-50 px-5 py-3 text-xs font-semibold text-amber-800 sm:px-6">
++            Detail error dibatasi {{ detailDitampilkan.toLocaleString('id-ID') }} contoh dari {{ invalid.toLocaleString('id-ID') }} baris agar preview tetap ringan.
++        </p>
++
+         <div class="grid grid-cols-1 gap-3 p-5 sm:grid-cols-3 sm:p-6">
+             <div class="rounded-2xl bg-blue-50 p-4 ring-1 ring-blue-100">
+                 <p class="text-[11px] font-bold uppercase tracking-wider text-blue-600">Total Baris</p>
+diff --git a/resources/js/Pages/Admin/Upload/Pinjaman.vue b/resources/js/Pages/Admin/Upload/Pinjaman.vue
+index 8b17adb..0cd6c05 100644
+--- a/resources/js/Pages/Admin/Upload/Pinjaman.vue
++++ b/resources/js/Pages/Admin/Upload/Pinjaman.vue
+@@ -17,7 +17,7 @@ const contohFormat = `id_cabang,id_uker,SEGMEN_2025,Segmentasi,Kualitas Kredit,
+         key-nilai="total"
+         label-nilai="Total Baki Debet"
+         :contoh-format="contohFormat"
+-        catatan-duplikat="Berkas divalidasi terlebih dahulu. Baris dengan salah satu kolom kosong atau tidak valid masuk daftar Error dan tidak menghentikan baris valid. Setelah verifikasi, tekan tombol Upload Data Valid."
++        catatan-duplikat="CSV UTF-8 dan UTF-16 didukung. Segmentasi yang kosong disimpan sebagai Tanpa Segmentasi. Baris tanpa Kualitas Kredit, Baki Debet, atau tanggal masuk daftar Error dan tidak menghentikan baris valid. Setelah verifikasi, tekan Upload Data Valid."
+         preview-before-upload
+     />
+ </template>
+diff --git a/tests/Feature/Admin/PinjamanImportTest.php b/tests/Feature/Admin/PinjamanImportTest.php
+index c903183..326d30e 100644
+--- a/tests/Feature/Admin/PinjamanImportTest.php
++++ b/tests/Feature/Admin/PinjamanImportTest.php
+@@ -71,6 +71,40 @@ class PinjamanImportTest extends TestCase
+         $this->assertSame(1_000_000_000.0, (float) Pinjaman::query()->sum('baki_debet'));
+     }
+ 
++
++    public function test_preview_menerima_csv_utf16_tableau_dengan_header_tanggal_terpisah(): void
++    {
++        $isiUtf8 = "id_cabang,id_uker,SEGMEN_2025,Segmentasi,Kualitas Kredit, Baki Debet ,Month, Day, Year of Posisi\r\n"
++            .self::CABANG.','.self::UKER.",Micro,,Lancar,100000000,01/31/2026\r\n";
++        $isiUtf16 = "\xFF\xFE".iconv('UTF-8', 'UTF-16LE', $isiUtf8);
++
++        $respons = $this->actingAs($this->admin())
++            ->post('/admin/upload/pinjaman/preview', [
++                'berkas' => $this->berkas($isiUtf16, 'SSA_Pinjaman_Non Commersial.csv'),
++            ]);
++
++        $respons->assertOk()
++            ->assertJsonPath('hasil.laporan.valid', 1)
++            ->assertJsonPath('hasil.laporan.tidak_valid', 0)
++            ->assertJsonPath('hasil.baris', 1);
++    }
++
++    public function test_upload_menjumlahkan_baris_sumber_dengan_kunci_yang_sama(): void
++    {
++        $isi = self::HEADER
++            .self::CABANG.','.self::UKER.",Small,,NPL,2026-06-18,100000000\n"
++            .self::CABANG.','.self::UKER.",Small,,NPL,2026-06-18,250000000\n";
++
++        $respons = $this->unggah($isi)->assertOk();
++
++        $respons->assertJsonPath('hasil.baris_sumber', 2)
++            ->assertJsonPath('hasil.baris', 1);
++
++        $this->assertSame(1, Pinjaman::query()->count());
++        $this->assertSame('Tanpa Segmentasi', Pinjaman::query()->value('segmentasi'));
++        $this->assertSame(350_000_000.0, (float) Pinjaman::query()->value('baki_debet'));
++    }
++
+     public function test_kualitas_tak_dikenal_ditolak(): void
+     {
+         $isi = self::HEADER.self::CABANG.','.self::UKER.",Mikro,Ritel,Macet,2026-06-18,1000000\n";

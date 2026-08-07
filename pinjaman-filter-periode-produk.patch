@@ -1,0 +1,544 @@
+--- a/app/Http/Controllers/PinjamanDashboardController.php
++++ b/app/Http/Controllers/PinjamanDashboardController.php
+@@ -44,6 +44,8 @@
+             $areaId,
+             $cabangId,
+             $ukerId,
++            $this->produkFilter($request),
++            $this->segmentasiFilter($request),
+         ));
+     }
+ 
+@@ -57,6 +59,8 @@
+             $areaId,
+             $cabangId,
+             $ukerId,
++            $this->produkFilter($request),
++            $this->segmentasiFilter($request),
+         ));
+     }
+ 
+@@ -70,6 +74,8 @@
+             $areaId,
+             $cabangId,
+             $ukerId,
++            $this->produkFilter($request),
++            $this->segmentasiFilter($request),
+         ));
+     }
+ 
+@@ -83,6 +89,8 @@
+             $areaId,
+             $cabangId,
+             $ukerId,
++            $this->produkFilter($request),
++            $this->segmentasiFilter($request),
+         ));
+     }
+ 
+@@ -96,6 +104,8 @@
+             $areaId,
+             $cabangId,
+             $ukerId,
++            $this->produkFilter($request),
++            $this->segmentasiFilter($request),
+         ));
+     }
+ 
+@@ -122,13 +132,35 @@
+     }
+ 
+     /**
+-     * @return array<string, int|null>
++     * @return array<string, int|string|null>
+      */
+     private function filter(Request $request): array
+     {
+         [$areaId, $cabangId, $ukerId] = $this->filterId($request);
+ 
+-        return ['area_id' => $areaId, 'cabang_id' => $cabangId, 'uker_id' => $ukerId];
++        return [
++            'area_id' => $areaId,
++            'cabang_id' => $cabangId,
++            'uker_id' => $ukerId,
++            'produk' => $this->produkFilter($request),
++            'segmentasi' => $this->segmentasiFilter($request),
++        ];
++    }
++
++    /** Produk pada UI disimpan di kolom database `segmentasi`. */
++    private function produkFilter(Request $request): ?string
++    {
++        $nilai = trim((string) $request->input('produk', ''));
++
++        return $nilai === '' ? null : $nilai;
++    }
++
++    /** Segmentasi pada UI disimpan di kolom database `segmen`. */
++    private function segmentasiFilter(Request $request): ?string
++    {
++        $nilai = trim((string) $request->input('segmentasi', ''));
++
++        return $nilai === '' ? null : $nilai;
+     }
+ 
+     /** Tab tak dikenal dinormalkan service ke `total`. */
+--- a/app/Services/PinjamanService.php
++++ b/app/Services/PinjamanService.php
+@@ -62,11 +62,62 @@
+      */
+     public function filterOptions(?int $areaId, ?int $cabangId): array
+     {
++        $produk = Pinjaman::query()
++            ->whereNotNull('segmentasi')
++            ->where('segmentasi', '!=', '')
++            ->distinct()
++            ->pluck('segmentasi')
++            ->merge(
++                RkaPinjaman::query()
++                    ->whereNotNull('segmentasi')
++                    ->where('segmentasi', '!=', '')
++                    ->distinct()
++                    ->pluck('segmentasi'),
++            )
++            ->map(fn ($nilai) => trim((string) $nilai))
++            ->filter()
++            ->unique(fn ($nilai) => strtolower((string) $nilai))
++            ->sortBy(fn ($nilai) => strtolower((string) $nilai))
++            ->values()
++            ->all();
++
++        $segmentasi = Pinjaman::query()
++            ->whereNotNull('segmen')
++            ->where('segmen', '!=', '')
++            ->distinct()
++            ->pluck('segmen')
++            ->merge(
++                RkaPinjaman::query()
++                    ->whereNotNull('segmen')
++                    ->where('segmen', '!=', '')
++                    ->distinct()
++                    ->pluck('segmen'),
++            )
++            ->map(fn ($nilai) => trim((string) $nilai))
++            ->filter()
++            ->unique(fn ($nilai) => strtolower((string) $nilai))
++            ->sortBy(fn ($nilai) => array_search($nilai, Pinjaman::SEGMEN, true) === false
++                ? PHP_INT_MAX
++                : array_search($nilai, Pinjaman::SEGMEN, true))
++            ->values()
++            ->all();
++
++        $periode = Pinjaman::query()
++            ->whereNotNull('tanggal')
++            ->distinct()
++            ->orderByDesc('tanggal')
++            ->pluck('tanggal')
++            ->map(fn ($tanggal) => Carbon::parse($tanggal)->toDateString())
++            ->values()
++            ->all();
++
+         return [
+             'area' => Area::query()->orderBy('nama')->get(['id', 'nama'])->toArray(),
+             'cabang' => $this->cabangPerArea($areaId),
+             'uker' => $cabangId === null ? [] : $this->ukerPerCabang($cabangId),
+-            'segmen' => Pinjaman::query()->distinct()->orderBy('segmen')->pluck('segmen')->all(),
++            'produk' => $produk,
++            'segmentasi' => $segmentasi,
++            'periode' => $periode,
+             'tanggal_maks' => $this->tanggalTerakhir(),
+             'tanggal_min' => Pinjaman::query()->min('tanggal'),
+         ];
+@@ -94,16 +145,16 @@
+      *
+      * @return array<string, mixed>
+      */
+-    public function snapshot(string $tanggal, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId): array
++    public function snapshot(string $tanggal, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $produk = null, ?string $segmentasi = null): array
+     {
+         $tab = $this->tab($tab);
+         $posisi = Carbon::parse($tanggal)->startOfDay();
+ 
+-        $referensi = $this->tanggalReferensi($posisi, $tab, $areaId, $cabangId, $ukerId);
++        $referensi = $this->tanggalReferensi($posisi, $tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi);
+ 
+         $dibaca = collect($referensi)->push($posisi->toDateString())->filter()->unique()->values();
+-        $nilai = $this->nilaiPerTanggalSegmen($dibaca->all(), $tab, $areaId, $cabangId, $ukerId);
+-        $target = $this->targetPerSegmen($posisi->year, $posisi->month, $tab, $areaId, $cabangId, $ukerId);
++        $nilai = $this->nilaiPerTanggalSegmen($dibaca->all(), $tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi);
++        $target = $this->targetPerSegmen($posisi->year, $posisi->month, $tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi);
+ 
+         $segmen = $this->segmenTersedia($nilai, $target);
+         $posisiNilai = $nilai[$posisi->toDateString()] ?? [];
+@@ -152,7 +203,7 @@
+      *
+      * @return array<string, mixed>
+      */
+-    public function chart(string $tanggal, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId): array
++    public function chart(string $tanggal, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $produk = null, ?string $segmentasi = null): array
+     {
+         $tab = $this->tab($tab);
+         $posisi = Carbon::parse($tanggal)->startOfDay();
+@@ -165,7 +216,7 @@
+             $posisi->toDateString(),
+         ];
+ 
+-        $harian = $this->dasar($tab, $areaId, $cabangId, $ukerId)
++        $harian = $this->dasar($tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi)
+             ->whereBetween('tanggal', $rentang)
+             ->groupBy('tanggal')
+             ->orderBy('tanggal')
+@@ -184,7 +235,7 @@
+      *
+      * @return array<string, mixed>
+      */
+-    public function chartSegmen(string $tanggal, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId): array
++    public function chartSegmen(string $tanggal, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $produk = null, ?string $segmentasi = null): array
+     {
+         $tab = $this->tab($tab);
+         $posisi = Carbon::parse($tanggal)->startOfDay();
+@@ -196,7 +247,7 @@
+             $posisi->toDateString(),
+         ];
+ 
+-        $baris = $this->dasar($tab, $areaId, $cabangId, $ukerId)
++        $baris = $this->dasar($tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi)
+             ->whereBetween('tanggal', $rentang)
+             ->groupBy('tanggal', 'segmen')
+             ->orderBy('tanggal')
+@@ -237,16 +288,16 @@
+      *
+      * @return array<string, mixed>
+      */
+-    public function produk(string $tanggal, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId): array
++    public function produk(string $tanggal, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $produk = null, ?string $segmentasi = null): array
+     {
+         $tab = $this->tab($tab);
+         $posisi = Carbon::parse($tanggal)->startOfDay();
+ 
+-        $referensi = $this->tanggalReferensi($posisi, $tab, $areaId, $cabangId, $ukerId);
++        $referensi = $this->tanggalReferensi($posisi, $tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi);
+         $dibaca = collect($referensi)->push($posisi->toDateString())->filter()->unique()->values();
+ 
+-        $nilai = $this->nilaiPerTanggalProduk($dibaca->all(), $tab, $areaId, $cabangId, $ukerId);
+-        $target = $this->targetPerProduk($posisi->year, $posisi->month, $tab, $areaId, $cabangId, $ukerId);
++        $nilai = $this->nilaiPerTanggalProduk($dibaca->all(), $tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi);
++        $target = $this->targetPerProduk($posisi->year, $posisi->month, $tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi);
+ 
+         $posisiNilai = $nilai[$posisi->toDateString()] ?? [];
+         $peta = $this->petaSegmenProduk($posisiNilai, $target);
+@@ -300,14 +351,14 @@
+      *
+      * @return array<string, mixed>
+      */
+-    public function branchPencapaian(string $tanggal, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId): array
++    public function branchPencapaian(string $tanggal, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $produk = null, ?string $segmentasi = null): array
+     {
+         $tab = $this->tab($tab);
+         $posisi = Carbon::parse($tanggal)->startOfDay();
+         $perUker = $cabangId !== null;
+         $kolom = $perUker ? 'uker_id' : 'cabang_id';
+ 
+-        $aktual = $this->dasar($tab, $areaId, $cabangId, $ukerId)
++        $aktual = $this->dasar($tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi)
+             // 855 disembunyikan dari BARIS tabel walau ikut di kartu Total.
+             ->when(! $perUker, fn (Builder $q) => $q->where('cabang_id', '!=', self::ROLLUP_REGION_ID))
+             ->where('tanggal', $posisi->toDateString())
+@@ -322,6 +373,8 @@
+             $perUker ? null : $areaId,
+             $cabangId,
+             $ukerId,
++            $produk,
++            $segmentasi,
+         )
+             ->when(! $perUker, fn (Builder $q) => $q->where('cabang_id', '!=', self::ROLLUP_REGION_ID))
+             ->groupBy($kolom)
+@@ -365,17 +418,17 @@
+      *
+      * @return array<string, string|null>
+      */
+-    private function tanggalReferensi(Carbon $posisi, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId): array
++    private function tanggalReferensi(Carbon $posisi, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $produk = null, ?string $segmentasi = null): array
+     {
+         $referensi = [
+-            'dtd' => $this->tanggalTersedia($posisi->copy()->subDay(), $tab, $areaId, $cabangId, $ukerId),
+-            'mtd' => $this->tanggalTersedia($posisi->copy()->subMonthNoOverflow()->endOfMonth(), $tab, $areaId, $cabangId, $ukerId),
+-            'ytd' => $this->tanggalTersedia($posisi->copy()->subYear()->endOfYear(), $tab, $areaId, $cabangId, $ukerId),
++            'dtd' => $this->tanggalTersedia($posisi->copy()->subDay(), $tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi),
++            'mtd' => $this->tanggalTersedia($posisi->copy()->subMonthNoOverflow()->endOfMonth(), $tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi),
++            'ytd' => $this->tanggalTersedia($posisi->copy()->subYear()->endOfYear(), $tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi),
+         ];
+ 
+         $referensi[$this->kunciDeltaTerakhir($tab)] = in_array($tab, self::TAB_INVERSE, true)
+-            ? $this->tanggalMom($posisi, $tab, $areaId, $cabangId, $ukerId)
+-            : $this->tanggalTersedia($posisi->copy()->subYear(), $tab, $areaId, $cabangId, $ukerId);
++            ? $this->tanggalMom($posisi, $tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi)
++            : $this->tanggalTersedia($posisi->copy()->subYear(), $tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi);
+ 
+         return $referensi;
+     }
+@@ -388,11 +441,11 @@
+      * yang tersedia di bulan tersebut — bukan ke tanggal mana pun sebelumnya,
+      * supaya perbandingannya tetap antar-bulan yang benar.
+      */
+-    private function tanggalMom(Carbon $posisi, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId): ?string
++    private function tanggalMom(Carbon $posisi, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $produk = null, ?string $segmentasi = null): ?string
+     {
+         $target = $posisi->copy()->subMonthNoOverflow();
+ 
+-        $persis = $this->dasar($tab, $areaId, $cabangId, $ukerId)
++        $persis = $this->dasar($tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi)
+             ->where('tanggal', $target->toDateString())
+             ->exists();
+ 
+@@ -400,7 +453,7 @@
+             return $target->toDateString();
+         }
+ 
+-        $fallback = $this->dasar($tab, $areaId, $cabangId, $ukerId)
++        $fallback = $this->dasar($tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi)
+             ->whereBetween('tanggal', [
+                 $target->copy()->startOfMonth()->toDateString(),
+                 $target->copy()->endOfMonth()->toDateString(),
+@@ -410,9 +463,9 @@
+         return $fallback === null ? null : Carbon::parse($fallback)->toDateString();
+     }
+ 
+-    private function tanggalTersedia(Carbon $batas, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId): ?string
+-    {
+-        $tanggal = $this->dasar($tab, $areaId, $cabangId, $ukerId)
++    private function tanggalTersedia(Carbon $batas, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $produk = null, ?string $segmentasi = null): ?string
++    {
++        $tanggal = $this->dasar($tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi)
+             ->where('tanggal', '<=', $batas->toDateString())
+             ->max('tanggal');
+ 
+@@ -422,19 +475,37 @@
+     /**
+      * Query dasar TERBATAS pada kualitas yang relevan dengan tab.
+      */
+-    private function dasar(string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId): Builder
+-    {
+-        return $this->dasarSemua($areaId, $cabangId, $ukerId)
++    private function dasar(string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $produk = null, ?string $segmentasi = null): Builder
++    {
++        return $this->dasarSemua($areaId, $cabangId, $ukerId, $produk, $segmentasi)
+             ->whereIn('kualitas', $this->kualitasTab($tab));
+     }
+ 
+     /**
+      * Query dasar tanpa penyaringan kualitas (dipakai tabel rincian per produk).
+      */
+-    private function dasarSemua(?int $areaId, ?int $cabangId, ?int $ukerId): Builder
++    private function dasarSemua(?int $areaId, ?int $cabangId, ?int $ukerId, ?string $produk = null, ?string $segmentasi = null): Builder
+     {
+         // Tidak ada pengecualian 855: segmen Menengah dikelola level Region.
+-        return $this->filterOrganisasi(Pinjaman::query(), $areaId, $cabangId, $ukerId);
++        return $this->filterDimensi(
++            $this->filterOrganisasi(Pinjaman::query(), $areaId, $cabangId, $ukerId),
++            $produk,
++            $segmentasi,
++        );
++    }
++
++    /**
++     * Filter UI: `produk` mengarah ke kolom `segmentasi`, sedangkan
++     * `segmentasi` mengarah ke kolom `segmen` pada tabel aktual dan RKA.
++     */
++    private function filterDimensi(Builder $query, ?string $produk, ?string $segmentasi): Builder
++    {
++        $produk = $produk === null ? null : trim($produk);
++        $segmentasi = $segmentasi === null ? null : trim($segmentasi);
++
++        return $query
++            ->when($produk !== null && $produk !== '', fn (Builder $q) => $q->where('segmentasi', $produk))
++            ->when($segmentasi !== null && $segmentasi !== '', fn (Builder $q) => $q->where('segmen', $segmentasi));
+     }
+ 
+     /**
+@@ -465,9 +536,15 @@
+         ?int $areaId,
+         ?int $cabangId,
+         ?int $ukerId,
++        ?string $produk = null,
++        ?string $segmentasi = null,
+     ): Builder
+     {
+-        $query = $this->filterOrganisasi(RkaPinjaman::query(), $areaId, $cabangId, $ukerId)
++        $query = $this->filterDimensi(
++            $this->filterOrganisasi(RkaPinjaman::query(), $areaId, $cabangId, $ukerId),
++            $produk,
++            $segmentasi,
++        )
+             ->where('tahun', $tahun)
+             ->where('bulan', $bulan);
+ 
+@@ -537,13 +614,13 @@
+      * @param  list<string>  $tanggal
+      * @return array<string, array<string, float>>
+      */
+-    private function nilaiPerTanggalSegmen(array $tanggal, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId): array
++    private function nilaiPerTanggalSegmen(array $tanggal, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $produk = null, ?string $segmentasi = null): array
+     {
+         if ($tanggal === []) {
+             return [];
+         }
+ 
+-        return $this->dasar($tab, $areaId, $cabangId, $ukerId)
++        return $this->dasar($tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi)
+             ->whereIn('tanggal', $tanggal)
+             ->groupBy('tanggal', 'segmen')
+             ->selectRaw('tanggal, segmen, SUM(baki_debet) as total')
+@@ -556,9 +633,9 @@
+     /**
+      * @return array<string, float>
+      */
+-    private function targetPerSegmen(int $tahun, int $bulan, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+-    {
+-        return $this->targetDasar($tab, $tahun, $bulan, $areaId, $cabangId, $ukerId)
++    private function targetPerSegmen(int $tahun, int $bulan, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $produk = null, ?string $segmentasi = null): array
++    {
++        return $this->targetDasar($tab, $tahun, $bulan, $areaId, $cabangId, $ukerId, $produk, $segmentasi)
+             ->groupBy('segmen')
+             ->selectRaw('segmen, SUM(target) as total')
+             ->pluck('total', 'segmen')
+@@ -596,13 +673,13 @@
+      * @param  list<string>  $tanggal
+      * @return array<string, array<string, array<string, float>>> [tanggal => [segmen => [segmentasi => nilai]]]
+      */
+-    private function nilaiPerTanggalProduk(array $tanggal, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId): array
++    private function nilaiPerTanggalProduk(array $tanggal, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $produk = null, ?string $segmentasi = null): array
+     {
+         if ($tanggal === []) {
+             return [];
+         }
+ 
+-        return $this->dasar($tab, $areaId, $cabangId, $ukerId)
++        return $this->dasar($tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi)
+             ->whereIn('tanggal', $tanggal)
+             ->groupBy('tanggal', 'segmen', 'segmentasi')
+             ->selectRaw('tanggal, segmen, segmentasi, SUM(baki_debet) as total')
+@@ -620,9 +697,9 @@
+      *
+      * @return array<string, array<string, float>> [segmen => [segmentasi => target]]
+      */
+-    private function targetPerProduk(int $tahun, int $bulan, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+-    {
+-        return $this->targetDasar($tab, $tahun, $bulan, $areaId, $cabangId, $ukerId)
++    private function targetPerProduk(int $tahun, int $bulan, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $produk = null, ?string $segmentasi = null): array
++    {
++        return $this->targetDasar($tab, $tahun, $bulan, $areaId, $cabangId, $ukerId, $produk, $segmentasi)
+             ->groupBy('segmen', 'segmentasi')
+             ->selectRaw('segmen, segmentasi, SUM(target) as total')
+             ->get()
+--- a/resources/js/Pages/PinjamanDashboard/Index.vue
++++ b/resources/js/Pages/PinjamanDashboard/Index.vue
+@@ -64,6 +64,8 @@
+     area_id: props.filterAwal.area_id ?? null,
+     cabang_id: props.filterAwal.cabang_id ?? null,
+     uker_id: props.filterAwal.uker_id ?? null,
++    produk: props.filterAwal.produk ?? null,
++    segmentasi: props.filterAwal.segmentasi ?? null,
+     tanggal: props.tanggalAwal,
+ });
+ const applied = reactive({ ...pending });
+@@ -72,7 +74,7 @@
+     Object.keys(applied).some((key) => (pending[key] ?? null) !== (applied[key] ?? null)),
+ );
+ 
+-const opsi = reactive({ area: [], cabang: [], uker: [] });
++const opsi = reactive({ area: [], cabang: [], uker: [], produk: [], segmentasi: [], periode: [] });
+ const snap = reactive({ total: null, sml: null, npl: null });
+ const grafik = reactive({ total: null, sml: null, npl: null });
+ const grafikSegmen = reactive({ total: null, sml: null, npl: null });
+@@ -362,7 +364,8 @@
+ const BULAN_ID = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+ function tanggalPanjang(iso) {
+     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso ?? '');
+-    return m ? `${Number(m[3])} ${BULAN_ID[Number(m[2]) - 1]} ${m[1]}` : iso;
++    const hari = m ? String(Number(m[3])).padStart(2, '0') : '';
++    return m ? `${hari} ${BULAN_ID[Number(m[2]) - 1]} ${m[1]}` : iso;
+ }
+ 
+ function namaPilihan(list, id, fallback) {
+@@ -374,20 +377,30 @@
+     !pending.area_id &&
+     !pending.cabang_id &&
+     !pending.uker_id &&
++    !pending.produk &&
++    !pending.segmentasi &&
+     pending.tanggal === props.tanggalAwal,
+ );
+ 
+ const cakupanData = computed(() => {
+-    if (applied.uker_id) return namaPilihan(opsi.uker, applied.uker_id, 'Unit Kerja terpilih');
+-    if (applied.cabang_id) return namaPilihan(opsi.cabang, applied.cabang_id, 'Cabang terpilih');
+-    if (applied.area_id) return namaPilihan(opsi.area, applied.area_id, 'Area terpilih');
+-    return 'Semua data Region 7 Jakarta 2';
++    let organisasi = 'Semua data Region 7 Jakarta 2';
++    if (applied.uker_id) organisasi = namaPilihan(opsi.uker, applied.uker_id, 'Unit Kerja terpilih');
++    else if (applied.cabang_id) organisasi = namaPilihan(opsi.cabang, applied.cabang_id, 'Cabang terpilih');
++    else if (applied.area_id) organisasi = namaPilihan(opsi.area, applied.area_id, 'Area terpilih');
++
++    const rincian = [organisasi];
++    if (applied.segmentasi) rincian.push(`Segmentasi: ${applied.segmentasi}`);
++    if (applied.produk) rincian.push(`Produk: ${applied.produk}`);
++
++    return rincian.join(' • ');
+ });
+ 
+ function resetFilter() {
+     pending.area_id = null;
+     pending.cabang_id = null;
+     pending.uker_id = null;
++    pending.produk = null;
++    pending.segmentasi = null;
+     pending.tanggal = props.tanggalAwal;
+ }
+ 
+@@ -396,6 +409,9 @@
+     opsi.area = data.area ?? [];
+     opsi.cabang = data.cabang ?? [];
+     opsi.uker = data.uker ?? [];
++    opsi.produk = data.produk ?? [];
++    opsi.segmentasi = data.segmentasi ?? [];
++    opsi.periode = data.periode ?? [];
+ }
+ 
+ async function muatKartuChart() {
+@@ -529,7 +545,11 @@
+                 <div class="grid grid-cols-2 gap-2.5 p-3 sm:grid-cols-3 xl:grid-cols-[1.05fr_1fr_1fr_1fr_1fr_1fr_auto_auto]">
+                     <label class="block min-w-0">
+                         <span class="filter-label">Periode</span>
+-                        <input v-model="pending.tanggal" type="date" class="filter-control" />
++                        <select v-model="pending.tanggal" class="filter-control">
++                            <option v-for="periode in opsi.periode" :key="periode" :value="periode">
++                                {{ tanggalPanjang(periode) }}
++                            </option>
++                        </select>
+                     </label>
+                     <label v-if="scope.bolehPilihArea.value" class="block min-w-0">
+                         <span class="filter-label">Area</span>
+@@ -554,14 +574,18 @@
+                     </label>
+                     <label class="block min-w-0">
+                         <span class="filter-label">Produk</span>
+-                        <select class="filter-control text-slate-500" disabled>
+-                            <option>Semua Produk</option>
++                        <select v-model="pending.produk" class="filter-control">
++                            <option :value="null">Semua Produk</option>
++                            <option v-for="produk in opsi.produk" :key="produk" :value="produk">{{ produk }}</option>
+                         </select>
+                     </label>
+                     <label class="block min-w-0">
+                         <span class="filter-label">Segmentasi</span>
+-                        <select class="filter-control text-slate-500" disabled>
+-                            <option>Semua Segmentasi</option>
++                        <select v-model="pending.segmentasi" class="filter-control">
++                            <option :value="null">Semua Segmentasi</option>
++                            <option v-for="segmentasi in opsi.segmentasi" :key="segmentasi" :value="segmentasi">
++                                {{ segmentasi }}
++                            </option>
+                         </select>
+                     </label>
+                     <button

@@ -1,0 +1,344 @@
+diff --git a/app/Models/RkaPinjaman.php b/app/Models/RkaPinjaman.php
+index 9f00d65..8ac535f 100644
+--- a/app/Models/RkaPinjaman.php
++++ b/app/Models/RkaPinjaman.php
+@@ -8,6 +8,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
+ 
+ class RkaPinjaman extends Model
+ {
++    /** Nilai target untuk tab Total OS pada dashboard Pinjaman. */
++    public const KUALITAS_OS = 'OS';
++
+     /** @use HasFactory<\Database\Factories\RkaPinjamanFactory> */
+     use HasFactory;
+ 
+diff --git a/app/Services/PinjamanService.php b/app/Services/PinjamanService.php
+index 5e5acab..bdf0a52 100644
+--- a/app/Services/PinjamanService.php
++++ b/app/Services/PinjamanService.php
+@@ -308,15 +308,15 @@ class PinjamanService
+             ->selectRaw("{$kolom} as entitas_id, SUM(baki_debet) as total")
+             ->pluck('total', 'entitas_id');
+ 
+-        $target = $this->filterOrganisasi(
+-            RkaPinjaman::query()->whereIn('kualitas', $this->kualitasTab($tab)),
++        $target = $this->targetDasar(
++            $tab,
++            $posisi->year,
++            $posisi->month,
+             $perUker ? null : $areaId,
+             $cabangId,
+             $ukerId,
+         )
+             ->when(! $perUker, fn (Builder $q) => $q->where('cabang_id', '!=', self::ROLLUP_REGION_ID))
+-            ->where('tahun', $posisi->year)
+-            ->where('bulan', $posisi->month)
+             ->groupBy($kolom)
+             ->selectRaw("{$kolom} as entitas_id, SUM(target) as total")
+             ->pluck('total', 'entitas_id');
+@@ -442,6 +442,52 @@ class PinjamanService
+         };
+     }
+ 
++    /**
++     * Query target RKA untuk tab aktif.
++     *
++     * Format RKA terbaru menyimpan target Total langsung sebagai kualitas `OS`,
++     * sedangkan format lama menyimpan Lancar + SML + NPL. Untuk kompatibilitas,
++     * baris format lama hanya dipakai pada kombinasi yang belum mempunyai OS.
++     * Dengan begitu OS tidak dijumlahkan lagi dengan SML/NPL (double count),
++     * tetapi data RKA lama tetap terbaca.
++     */
++    private function targetDasar(
++        string $tab,
++        int $tahun,
++        int $bulan,
++        ?int $areaId,
++        ?int $cabangId,
++        ?int $ukerId,
++    ): Builder
++    {
++        $query = $this->filterOrganisasi(RkaPinjaman::query(), $areaId, $cabangId, $ukerId)
++            ->where('tahun', $tahun)
++            ->where('bulan', $bulan);
++
++        if ($tab !== self::TAB_TOTAL) {
++            return $query->whereIn('kualitas', $this->kualitasTab($tab));
++        }
++
++        return $query->where(function (Builder $target) {
++            $target
++                ->where('kualitas', RkaPinjaman::KUALITAS_OS)
++                ->orWhere(function (Builder $legacy) {
++                    $legacy
++                        ->whereIn('kualitas', Pinjaman::KUALITAS)
++                        ->whereNotExists(function ($os) {
++                            $os->selectRaw('1')
++                                ->from('rka_pinjaman as rka_os')
++                                ->whereColumn('rka_os.uker_id', 'rka_pinjaman.uker_id')
++                                ->whereColumn('rka_os.segmen', 'rka_pinjaman.segmen')
++                                ->whereColumn('rka_os.segmentasi', 'rka_pinjaman.segmentasi')
++                                ->whereColumn('rka_os.tahun', 'rka_pinjaman.tahun')
++                                ->whereColumn('rka_os.bulan', 'rka_pinjaman.bulan')
++                                ->where('rka_os.kualitas', RkaPinjaman::KUALITAS_OS);
++                        });
++                });
++        });
++    }
++
+     private function tab(string $tab): string
+     {
+         $tab = strtolower(trim($tab));
+@@ -505,14 +551,7 @@ class PinjamanService
+      */
+     private function targetPerSegmen(int $tahun, int $bulan, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+     {
+-        return $this->filterOrganisasi(
+-            RkaPinjaman::query()->whereIn('kualitas', $this->kualitasTab($tab)),
+-            $areaId,
+-            $cabangId,
+-            $ukerId,
+-        )
+-            ->where('tahun', $tahun)
+-            ->where('bulan', $bulan)
++        return $this->targetDasar($tab, $tahun, $bulan, $areaId, $cabangId, $ukerId)
+             ->groupBy('segmen')
+             ->selectRaw('segmen, SUM(target) as total')
+             ->pluck('total', 'segmen')
+@@ -576,14 +615,7 @@ class PinjamanService
+      */
+     private function targetPerProduk(int $tahun, int $bulan, string $tab, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+     {
+-        return $this->filterOrganisasi(
+-            RkaPinjaman::query()->whereIn('kualitas', $this->kualitasTab($tab)),
+-            $areaId,
+-            $cabangId,
+-            $ukerId,
+-        )
+-            ->where('tahun', $tahun)
+-            ->where('bulan', $bulan)
++        return $this->targetDasar($tab, $tahun, $bulan, $areaId, $cabangId, $ukerId)
+             ->groupBy('segmen', 'segmentasi')
+             ->selectRaw('segmen, segmentasi, SUM(target) as total')
+             ->get()
+diff --git a/app/Services/RkaPinjamanCsvImportService.php b/app/Services/RkaPinjamanCsvImportService.php
+index fbb7fe5..8261c46 100644
+--- a/app/Services/RkaPinjamanCsvImportService.php
++++ b/app/Services/RkaPinjamanCsvImportService.php
+@@ -18,8 +18,13 @@ use Illuminate\Support\Facades\DB;
+ /**
+  * Import target RKA Pinjaman dari CSV/Excel.
+  *
+- * Format (long), nilai RUPIAH PENUH:
+- *   id_cabang | id_uker | segmen | segmentasi | kualitas | tahun | bulan | target
++ * Format bisnis terbaru, nilai RUPIAH PENUH:
++ *   id_cabang | id_uker | Segmentasi | Produk | Kualitas | Target | Bulan | Tahun
++ *
++ * Pada format tersebut, `Segmentasi` adalah segmen utama (Micro/Small/Consumer/
++ * Medium), sedangkan `Produk` disimpan ke dimensi `segmentasi` agar tetap cocok
++ * dengan struktur tabel dan data aktual. Format lama `segmen | segmentasi` tetap
++ * diterima untuk kompatibilitas.
+  *
+  * Sama seperti RKA Simpanan: nama kolom toleran, bulan boleh nama, sel target
+  * kosong berarti "tidak punya target" (dilewati, bukan disimpan 0), dan
+@@ -36,7 +41,7 @@ class RkaPinjamanCsvImportService
+         'id_cabang' => ['cabang_id', 'kode_cabang', 'cabang'],
+         'id_uker' => ['uker_id', 'kode_uker', 'uker'],
+         'segmen' => ['segment'],
+-        'segmentasi' => [],
++        'segmentasi' => ['produk', 'product'],
+         'kualitas' => ['kolektibilitas', 'kol'],
+         'tahun' => ['thn', 'year'],
+         'bulan' => ['bln', 'month', 'periode'],
+@@ -47,7 +52,7 @@ class RkaPinjamanCsvImportService
+     public const WAJIB = ['id_cabang', 'id_uker', 'segmen', 'kualitas', 'tahun', 'bulan', 'target'];
+ 
+     /** @var list<string> */
+-    public const KOLOM = ['id_cabang', 'id_uker', 'segmen', 'segmentasi', 'kualitas', 'tahun', 'bulan', 'target'];
++    public const KOLOM = ['id_cabang', 'id_uker', 'Segmentasi', 'Produk', 'Kualitas', 'Target', 'Bulan', 'Tahun'];
+ 
+     /**
+      * @return array{tahun: list<int>, baris: int, dilewati: int, total_target: float}
+@@ -104,6 +109,7 @@ class RkaPinjamanCsvImportService
+     private function baca(string $path, string $namaBerkas): array
+     {
+         $mentah = Spreadsheet::baca($path, namaAsli: $namaBerkas);
++        $mentah = $this->normalisasiFormatSegmentasiProduk($mentah);
+         $baris = PetaKolom::petakan($mentah, self::ALIAS, self::WAJIB, $namaBerkas);
+ 
+         $ukerValid = Uker::query()->pluck('cabang_id', 'id');
+@@ -114,17 +120,19 @@ class RkaPinjamanCsvImportService
+             $nomor = $i + 2;
+ 
+             $ukerId = (int) trim((string) $r['id_uker']);
+-            $kualitas = trim((string) $r['kualitas']);
+-            $segmen = trim((string) $r['segmen']);
++            $kualitas = $this->normalisasiKualitas($r['kualitas']);
++            $segmen = $this->normalisasiSegmen($r['segmen']);
+             $tahun = (int) trim((string) $r['tahun']);
+ 
+             if (! $ukerValid->has($ukerId)) {
+                 throw ImportException::berkas("Baris {$nomor}: id_uker {$ukerId} tidak ada di master uker.");
+             }
+ 
+-            if (! in_array($kualitas, Pinjaman::KUALITAS, true)) {
++            $kualitasValid = [RkaPinjaman::KUALITAS_OS, ...Pinjaman::KUALITAS];
++
++            if (! in_array($kualitas, $kualitasValid, true)) {
+                 throw ImportException::berkas(
+-                    "Baris {$nomor}: kualitas '{$kualitas}' tidak dikenal. Gunakan: ".implode(', ', Pinjaman::KUALITAS).'.',
++                    "Baris {$nomor}: kualitas '{$kualitas}' tidak dikenal. Gunakan: ".implode(', ', $kualitasValid).'.',
+                 );
+             }
+ 
+@@ -157,6 +165,83 @@ class RkaPinjamanCsvImportService
+         return ['baris' => $hasil, 'dilewati' => $dilewati];
+     }
+ 
++    /**
++     * Format RKA dari unit bisnis memakai judul:
++     *   Segmentasi = segmen utama, Produk = rincian produk.
++     *
++     * Karena format lama juga mempunyai kolom bernama `segmentasi`, pemetaan
++     * harus ditentukan dari kombinasi header. Bila kolom `segmen` sudah ada,
++     * baris dibiarkan memakai format lama.
++     *
++     * @param  Collection<int, array<string, string>>  $baris
++     * @return Collection<int, array<string, string>>
++     */
++    private function normalisasiFormatSegmentasiProduk(Collection $baris): Collection
++    {
++        if ($baris->isEmpty()) {
++            return $baris;
++        }
++
++        $header = array_keys($baris->first());
++        $headerNormal = [];
++
++        foreach ($header as $kolom) {
++            $headerNormal[$this->normalisasiHeader($kolom)] = $kolom;
++        }
++
++        $punyaSegmen = collect(['segmen', 'segment', 'segmen2025'])
++            ->contains(fn (string $nama) => isset($headerNormal[$nama]));
++        $kolomSegmentasi = $headerNormal['segmentasi'] ?? null;
++        $kolomProduk = $headerNormal['produk'] ?? $headerNormal['product'] ?? null;
++
++        if ($punyaSegmen || $kolomSegmentasi === null || $kolomProduk === null) {
++            return $baris;
++        }
++
++        return $baris->map(function (array $r) use ($kolomSegmentasi, $kolomProduk) {
++            $segmen = $r[$kolomSegmentasi] ?? '';
++            $produk = $r[$kolomProduk] ?? '';
++
++            unset($r[$kolomSegmentasi], $r[$kolomProduk]);
++
++            $r['segmen'] = $segmen;
++            $r['segmentasi'] = $produk;
++
++            return $r;
++        });
++    }
++
++    private function normalisasiHeader(string $nilai): string
++    {
++        return preg_replace('/[\s_]+/', '', strtolower(trim($nilai)));
++    }
++
++    private function normalisasiSegmen(mixed $nilai): string
++    {
++        $mentah = trim((string) $nilai);
++
++        return match (strtolower($mentah)) {
++            'micro', 'mikro' => 'Micro',
++            'small', 'kecil' => 'Small',
++            'consumer', 'konsumer', 'konsumtif' => 'Consumer',
++            'medium', 'menengah' => 'Medium',
++            default => $mentah,
++        };
++    }
++
++    private function normalisasiKualitas(mixed $nilai): string
++    {
++        $mentah = trim((string) $nilai);
++
++        return match (strtoupper($mentah)) {
++            'OS', 'OUTSTANDING' => RkaPinjaman::KUALITAS_OS,
++            'LANCAR' => Pinjaman::KUALITAS_LANCAR,
++            'SML' => Pinjaman::KUALITAS_SML,
++            'NPL' => Pinjaman::KUALITAS_NPL,
++            default => $mentah,
++        };
++    }
++
+     private function angka(mixed $nilai, int $nomor): float
+     {
+         $bersih = str_replace([' ', ',', "\u{00A0}"], '', trim((string) $nilai));
+diff --git a/tests/Feature/Admin/PinjamanImportTest.php b/tests/Feature/Admin/PinjamanImportTest.php
+index c903183..26d7d1b 100644
+--- a/tests/Feature/Admin/PinjamanImportTest.php
++++ b/tests/Feature/Admin/PinjamanImportTest.php
+@@ -182,6 +182,27 @@ class PinjamanImportTest extends TestCase
+         $this->assertSame(100_000_000.0, (float) $baris->target);
+     }
+ 
++    public function test_rka_menerima_format_segmentasi_produk_dan_kualitas_os(): void
++    {
++        $isi = "id_cabang,id_uker,Segmentasi,Produk,Kualitas,          Target          ,Bulan,Tahun\n"
++            .self::CABANG.','.self::UKER.",Micro,Kupedes Komersial,OS,100000000,Januari,2026\n"
++            .self::CABANG.','.self::UKER.",Konsumer,KPR,NPL,20000000,Januari,2026\n";
++
++        $this->unggahRka($isi)->assertOk();
++
++        $os = RkaPinjaman::query()->where('kualitas', RkaPinjaman::KUALITAS_OS)->sole();
++        $npl = RkaPinjaman::query()->where('kualitas', Pinjaman::KUALITAS_NPL)->sole();
++
++        $this->assertSame('Micro', $os->segmen);
++        $this->assertSame('Kupedes Komersial', $os->segmentasi);
++        $this->assertSame(1, $os->bulan);
++        $this->assertSame(100_000_000.0, (float) $os->target);
++
++        // Istilah sumber "Konsumer" disamakan dengan segmen aktual "Consumer".
++        $this->assertSame('Consumer', $npl->segmen);
++        $this->assertSame('KPR', $npl->segmentasi);
++    }
++
+     public function test_rka_melewati_target_kosong(): void
+     {
+         $isi = "id_cabang,id_uker,segmen,segmentasi,kualitas,tahun,bulan,target\n"
+diff --git a/tests/Feature/PinjamanDashboardTest.php b/tests/Feature/PinjamanDashboardTest.php
+index 0c2bbbc..7d5e8da 100644
+--- a/tests/Feature/PinjamanDashboardTest.php
++++ b/tests/Feature/PinjamanDashboardTest.php
+@@ -261,6 +261,30 @@ class PinjamanDashboardTest extends TestCase
+         $this->assertSame(80.0, $npl['pencapaian']);
+     }
+ 
++    public function test_target_os_tidak_dijumlahkan_lagi_dengan_target_sml_dan_npl(): void
++    {
++        RkaPinjaman::factory()->create([
++            'cabang_id' => self::CABANG_A,
++            'uker_id' => self::UKER_A,
++            'segmen' => 'Micro',
++            'segmentasi' => 'Ritel',
++            'kualitas' => RkaPinjaman::KUALITAS_OS,
++            'tahun' => 2026,
++            'bulan' => 6,
++            'target' => 900 * 1_000_000,
++        ]);
++
++        // Baris legacy Lancar/SML/NPL masih ada dari setUp, tetapi untuk tab
++        // Total harus digantikan oleh target OS, bukan ikut dijumlahkan.
++        $total = $this->kartu($this->snapshot($this->admin(), 'total', ['cabang_id' => self::CABANG_A]), 'total');
++        $sml = $this->kartu($this->snapshot($this->admin(), 'sml', ['cabang_id' => self::CABANG_A]), 'total');
++        $npl = $this->kartu($this->snapshot($this->admin(), 'npl', ['cabang_id' => self::CABANG_A]), 'total');
++
++        $this->assertSame(900.0, $total['target']);
++        $this->assertSame(100.0, $sml['target']);
++        $this->assertSame(100.0, $npl['target']);
++    }
++
+     public function test_flag_inverse_dikirim_ke_frontend(): void
+     {
+         $this->assertFalse($this->snapshot($this->admin(), 'total')['inverse']);

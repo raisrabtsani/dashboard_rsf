@@ -1,0 +1,136 @@
+--- a/app/Services/PinjamanService.php
++++ b/app/Services/PinjamanService.php
+@@ -157,8 +157,16 @@
+         $tab = $this->tab($tab);
+         $posisi = Carbon::parse($tanggal)->startOfDay();
+ 
++        // Samakan pola dashboard DPK: Desember tahun sebelumnya + 5 bulan
++        // terakhir sampai bulan posisi. Frontend akan merangkai 6 seri tetap
++        // dari rentang ini.
++        $rentang = [
++            $posisi->copy()->subYear()->month(12)->startOfMonth()->toDateString(),
++            $posisi->toDateString(),
++        ];
++
+         $harian = $this->dasar($tab, $areaId, $cabangId, $ukerId)
+-            ->whereBetween('tanggal', [$posisi->copy()->startOfYear()->toDateString(), $posisi->toDateString()])
++            ->whereBetween('tanggal', $rentang)
+             ->groupBy('tanggal')
+             ->orderBy('tanggal')
+             ->selectRaw('tanggal, SUM(baki_debet) as total')
+@@ -695,16 +703,25 @@
+     {
+         return collect($harian)
+             ->mapWithKeys(fn ($total, $tgl) => [Carbon::parse($tgl)->toDateString() => $total])
+-            ->groupBy(fn ($total, string $tgl) => (int) Carbon::parse($tgl)->month, preserveKeys: true)
+-            ->map(fn (Collection $bulanan, int $bulan) => [
+-                'bulan' => $bulan,
+-                'nama' => self::NAMA_BULAN[$bulan],
+-                'titik' => $bulanan->map(fn ($total, string $tgl) => [
+-                    'tanggal' => $tgl,
+-                    'hari' => (int) Carbon::parse($tgl)->day,
+-                    'nilai' => Satuan::toJuta($total),
+-                ])->values()->all(),
+-            ])
++            // Gunakan key tahun-bulan agar Desember tahun lalu tidak tergabung
++            // dengan Desember tahun berjalan.
++            ->groupBy(fn ($total, string $tgl) => Carbon::parse($tgl)->format('Y-m'), preserveKeys: true)
++            ->map(function (Collection $bulanan, string $periode) {
++                $tanggalPeriode = Carbon::createFromFormat('Y-m', $periode)->startOfMonth();
++                $bulan = (int) $tanggalPeriode->month;
++
++                return [
++                    'periode' => $periode,
++                    'tahun' => (int) $tanggalPeriode->year,
++                    'bulan' => $bulan,
++                    'nama' => self::NAMA_BULAN[$bulan],
++                    'titik' => $bulanan->map(fn ($total, string $tgl) => [
++                        'tanggal' => $tgl,
++                        'hari' => (int) Carbon::parse($tgl)->day,
++                        'nilai' => Satuan::toJuta($total),
++                    ])->values()->all(),
++                ];
++            })
+             ->sortKeys()
+             ->values()
+             ->all();
+--- a/resources/js/Pages/PinjamanDashboard/Index.vue
++++ b/resources/js/Pages/PinjamanDashboard/Index.vue
+@@ -124,22 +124,56 @@
+     return total > 0 ? (nilai / total) * 100 : null;
+ }
+ 
++function periodeTrend() {
++    const tanggal = new Date(`${applied.tanggal}T00:00:00`);
++    const tahun = tanggal.getFullYear();
++    const bulan = tanggal.getMonth() + 1;
++    const hasil = [{ tahun: tahun - 1, bulan: 12 }];
++
++    // Samakan pola DPK: tampilkan Desember tahun sebelumnya + lima bulan
++    // terakhir (termasuk bulan posisi), dengan deduplikasi lintas tahun.
++    for (let mundur = 4; mundur >= 0; mundur -= 1) {
++        const periode = new Date(tahun, bulan - 1 - mundur, 1);
++        const item = { tahun: periode.getFullYear(), bulan: periode.getMonth() + 1 };
++        if (!hasil.some((p) => p.tahun === item.tahun && p.bulan === item.bulan)) hasil.push(item);
++    }
++
++    return hasil;
++}
++
+ function buildDataset(seri) {
+-    const list = seri ?? [];
+-    if (!list.length) return null;
+-
+-    const hariMaks = Math.max(1, ...list.flatMap((s) => s.titik.map((t) => t.hari)));
+-    const labels = Array.from({ length: hariMaks }, (_, i) => String(i + 1));
++    const sumber = seri ?? [];
++    if (!sumber.length) return null;
++
++    const periode = periodeTrend();
++    const labels = Array.from({ length: 31 }, (_, i) => String(i + 1));
++    const warnaTrend = ['#7c8ea6', '#5f95ff', '#31c48d', '#f0ad32', '#ff6b6b', '#14b8d4'];
++    const namaBulan = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
+ 
+     return {
+         labels,
+-        datasets: list.map((s) => ({
+-            label: s.nama,
+-            borderColor: warnaBulan(s.bulan),
+-            backgroundColor: warnaBulan(s.bulan),
+-            data: labels.map((h) => s.titik.find((t) => t.hari === Number(h))?.nilai ?? null),
+-            spanGaps: false,
+-        })),
++        datasets: periode
++            .map((p, idx) => {
++                const dataSeri = sumber.find((s) => Number(s.tahun) === p.tahun && Number(s.bulan) === p.bulan);
++                if (!dataSeri) return null;
++
++                const terakhir = idx === periode.length - 1;
++                const warna = warnaTrend[idx] ?? warnaBulan(p.bulan);
++
++                return {
++                    label: `${namaBulan[p.bulan - 1]} ${p.tahun}`,
++                    borderColor: warna,
++                    backgroundColor: warna,
++                    data: labels.map((h) => dataSeri?.titik?.find((t) => t.hari === Number(h))?.nilai ?? null),
++                    spanGaps: false,
++                    borderDash: terakhir ? [] : [5, 5],
++                    borderWidth: terakhir ? 3 : 2,
++                    pointRadius: 0,
++                    pointHoverRadius: terakhir ? 4 : 3,
++                    fill: false,
++                };
++            })
++            .filter(Boolean),
+     };
+ }
+ 
+@@ -603,7 +637,7 @@
+                             <span class="text-[9px] text-slate-300">Tahun {{ grafik[q.key]?.tahun ?? '' }}</span>
+                         </div>
+                         <div class="mt-1 h-[151px]">
+-                            <LineChart v-if="chartQ(q.key)" :labels="chartQ(q.key).labels" :datasets="chartQ(q.key).datasets" />
++                            <LineChart v-if="chartQ(q.key)" :labels="chartQ(q.key).labels" :datasets="chartQ(q.key).datasets" variant="monthly-trend" :show-last-value-tag="true" />
+                             <p v-else class="pt-14 text-center text-xs text-slate-400">Tidak ada data.</p>
+                         </div>
+                     </article>
