@@ -57,6 +57,7 @@ const branch = ref({
     inverse: false,
 });
 const drilldown = ref(null);
+const filterAreaHeadTabel = ref('');
 const memuat = reactive({ kartu: false, chart: false, tabel: false });
 const sort = useTableSort('nilai', 'desc');
 
@@ -71,7 +72,21 @@ const kartuLebar = computed(() => {
     return kartuSemua.value.filter((k) => !compact.has(k.kode));
 });
 const selectedMeta = computed(() => kpiMeta.value.find((k) => k.kode === selectedKpi.value) ?? null);
-const barisTerurut = computed(() => sort.urutkan(branch.value.baris ?? []));
+const opsiAreaHeadTabel = computed(() => {
+    const nama = (branch.value.baris ?? [])
+        .map((row) => String(row.area_nama ?? '').trim())
+        .filter(Boolean);
+
+    return [...new Set(nama)].sort((a, b) => a.localeCompare(b, 'id'));
+});
+const barisTerurut = computed(() => {
+    const rows = (branch.value.baris ?? []).filter((row) => {
+        if (!filterAreaHeadTabel.value) return true;
+        return String(row.area_nama ?? '').trim() === filterAreaHeadTabel.value;
+    });
+
+    return sort.urutkan(rows);
+});
 
 const NAMA_BULAN = [
     'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -230,6 +245,7 @@ async function terapkan() {
 
     Object.assign(applied, pending);
     drilldown.value = null;
+    filterAreaHeadTabel.value = '';
     await muatSemua();
 }
 
@@ -241,15 +257,21 @@ async function resetFilter() {
 
     Object.assign(applied, pending);
     drilldown.value = null;
+    filterAreaHeadTabel.value = '';
 
     await muatOpsi();
     await muatSemua();
+}
+
+function resetFilterTabel() {
+    filterAreaHeadTabel.value = '';
 }
 
 async function gantiToggle(key) {
     if (toggle.value === key) return;
     toggle.value = key;
     drilldown.value = null;
+    filterAreaHeadTabel.value = '';
     snapshot.value = null;
     Object.keys(charts).forEach((kode) => delete charts[kode]);
     await muatOpsi();
@@ -482,23 +504,61 @@ onMounted(async () => {
                 <section v-if="scope.bolehLihatRanking.value" class="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                     <LoadingOverlay :show="memuat.tabel" />
 
-                    <div class="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div class="relative flex flex-col gap-3 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-end lg:justify-between">
                         <div>
-                            <h2 class="text-sm font-black uppercase tracking-wide text-slate-700">
+                            <h2 class="text-sm font-extrabold uppercase tracking-wide text-slate-700">
                                 Kinerja {{ toggle.toUpperCase() }} {{ branch.grouping === 'uker' ? 'Unit Kerja' : 'Cabang' }}
                             </h2>
-                            <p class="mt-0.5 text-[10px] font-medium text-slate-400">Posisi {{ tanggalPanjang(branch.tanggal) }}</p>
+                            <p class="mt-1 text-xs font-medium text-slate-400">Posisi {{ tanggalPanjang(branch.tanggal) }}</p>
                         </div>
 
-                        <div class="flex flex-wrap items-center gap-2">
-                            <select v-model="drilldown" class="h-10 min-w-[180px] rounded-xl border-slate-200 text-xs font-semibold text-slate-700">
-                                <option :value="null">Semua BO</option>
-                                <option v-for="c in opsi.cabang" :key="c.id" :value="c.id">{{ c.nama }}</option>
-                            </select>
-                            <select v-model="selectedKpi" class="h-10 min-w-[170px] rounded-xl border-slate-200 text-xs font-semibold text-slate-700">
-                                <option v-for="k in kpiMeta" :key="k.kode" :value="k.kode">{{ k.label }}</option>
-                            </select>
+                        <div class="flex flex-wrap items-end gap-2">
+                            <label class="min-w-[220px]">
+                                <span class="mb-1 block text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-400">Area Head</span>
+                                <div class="relative">
+                                    <select
+                                        v-model="filterAreaHeadTabel"
+                                        class="h-10 w-full appearance-none rounded-xl border-slate-200 bg-white pl-3 pr-9 text-xs font-bold text-slate-700 shadow-sm focus:border-blue-400 focus:ring-blue-400"
+                                    >
+                                        <option value="">Semua Area Head</option>
+                                        <option v-for="nama in opsiAreaHeadTabel" :key="nama" :value="nama">{{ nama }}</option>
+                                    </select>
+                                    <svg class="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="m6 8 4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
+                                    </svg>
+                                </div>
+                            </label>
+
+                            <label class="min-w-[170px]">
+                                <span class="mb-1 block text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-400">KPI</span>
+                                <div class="relative">
+                                    <select
+                                        v-model="selectedKpi"
+                                        class="h-10 w-full appearance-none rounded-xl border-slate-200 bg-white pl-3 pr-9 text-xs font-bold text-slate-700 shadow-sm focus:border-blue-400 focus:ring-blue-400"
+                                    >
+                                        <option v-for="k in kpiMeta" :key="k.kode" :value="k.kode">{{ k.label }}</option>
+                                    </select>
+                                    <svg class="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="m6 8 4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
+                                    </svg>
+                                </div>
+                            </label>
+
+                            <button
+                                type="button"
+                                class="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:cursor-default disabled:opacity-45"
+                                :disabled="!filterAreaHeadTabel"
+                                @click="resetFilterTabel"
+                            >
+                                <svg class="h-4 w-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                                    <path d="M3 3v5h5" />
+                                </svg>
+                                Reset
+                            </button>
                         </div>
+
+                        <div class="pointer-events-none absolute inset-x-0 bottom-0 h-0.5" style="background: linear-gradient(90deg, #3b82f6, #22d3ee, #34d399, #fbbf24, #e879f9)" />
                     </div>
 
                     <div class="overflow-x-auto">
@@ -520,7 +580,10 @@ onMounted(async () => {
                             <tbody class="divide-y divide-slate-100">
                                 <tr v-for="(b, index) in barisTerurut" :key="b.id" class="transition hover:bg-blue-50/50">
                                     <td class="px-3 py-2.5 text-center font-semibold text-slate-400">{{ index + 1 }}</td>
-                                    <td class="px-3 py-2.5 font-bold text-slate-700">{{ b.nama }}</td>
+                                    <td class="px-3 py-2.5">
+                                        <p class="font-extrabold text-slate-700">{{ b.nama }}</p>
+                                        <p v-if="b.area_nama" class="mt-0.5 text-[9px] font-semibold text-blue-500">Area Head: {{ b.area_nama }}</p>
+                                    </td>
                                     <td class="px-3 py-2.5 text-right font-black tabular-nums text-slate-800">{{ fmtBranchNilai(b.nilai) }}</td>
                                     <template v-if="branch.punya_target">
                                         <td class="px-3 py-2.5 text-right font-semibold tabular-nums text-slate-500">{{ fmtBranchNilai(b.target) }}</td>

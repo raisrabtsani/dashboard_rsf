@@ -305,16 +305,18 @@ abstract class MerchantService
                 ->pluck('total', 'entitas_id');
         }
 
-        $nama = $perUker
-            ? Uker::query()->whereIn('id', $aktual->keys())->pluck('nama', 'id')
-            : Cabang::query()->whereIn('id', $aktual->keys())->pluck('nama', 'id');
+        $entitas = $perUker
+            ? Uker::query()->with('cabang.area')->whereIn('id', $aktual->keys())->get()->keyBy('id')
+            : Cabang::query()->with('area')->whereIn('id', $aktual->keys())->get()->keyBy('id');
 
-        $baris = $aktual->map(function ($total, $entitasId) use ($target, $nama, $rupiah, $punyaTarget, $pembanding) {
+        $baris = $aktual->map(function ($total, $entitasId) use ($target, $entitas, $rupiah, $punyaTarget, $pembanding) {
             $nilai = (float) $total;
             $rka = (float) ($target[$entitasId] ?? 0);
+            $model = $entitas[$entitasId] ?? null;
             $hasil = [
                 'id' => (int) $entitasId,
-                'nama' => $nama[$entitasId] ?? (string) $entitasId,
+                'nama' => $model?->nama ?? (string) $entitasId,
+                'area_nama' => $model?->area?->nama ?? $model?->cabang?->area?->nama,
                 'nilai' => $this->tampil($nilai, $rupiah),
                 'target' => $punyaTarget ? $this->tampil($rka, $rupiah) : null,
                 'pencapaian' => ($punyaTarget && $rka > 0) ? round($nilai / $rka * 100, 2) : null,

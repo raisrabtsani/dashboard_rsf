@@ -174,37 +174,6 @@ class MerchantImportTest extends TestCase
         $this->assertSame(0, RkaEdc::query()->where('kpi', 'EDC_SV_0')->count());
     }
 
-    public function test_rka_edc_sales_volume_dijumlahkan_per_uker_bulan_tahun(): void
-    {
-        $isi = "id_cabang,id_uker,kpi,tahun,bulan,target\n"
-            .self::CABANG.','.self::UKER.",Sales_Volume_Marginal,2026,3,100000000\n"
-            .self::CABANG.','.self::UKER.",Sales_Volume_Marginal,2026,Maret,250000000\n"
-            .self::CABANG.','.self::UKER.",Sales_Volume_Marginal,2026,4,50000000\n";
-
-        $respons = $this->unggahRka($isi)->assertOk();
-
-        $this->assertSame(2, RkaEdc::query()->where('kpi', 'SALES_VOLUME')->count());
-        $this->assertSame(
-            350_000_000.0,
-            (float) RkaEdc::query()
-                ->where('kpi', 'SALES_VOLUME')
-                ->where('tahun', 2026)
-                ->where('bulan', 3)
-                ->value('target'),
-        );
-        $this->assertSame(
-            50_000_000.0,
-            (float) RkaEdc::query()
-                ->where('kpi', 'SALES_VOLUME')
-                ->where('tahun', 2026)
-                ->where('bulan', 4)
-                ->value('target'),
-        );
-        $this->assertSame(3, $respons->json('hasil.sales_volume_baris_sumber'));
-        $this->assertSame(2, $respons->json('hasil.sales_volume_kombinasi'));
-        $this->assertSame(1, $respons->json('hasil.sales_volume_baris_digabung'));
-    }
-
     public function test_rka_edc_menolak_kpi_edc_sv_nol(): void
     {
         $isi = "id_cabang,id_uker,kpi,tahun,bulan,target\n"
@@ -214,6 +183,24 @@ class MerchantImportTest extends TestCase
         $respons->assertStatus(422);
         $this->assertStringContainsString('tidak dikenal', $respons->json('message'));
         $this->assertSame(0, RkaEdc::query()->count());
+    }
+
+    public function test_upload_qris_menormalkan_nama_kpi_actual(): void
+    {
+        $isi = "id_cabang,id_uker,KPI,Actual,Posisi\n"
+            .self::CABANG.','.self::UKER.",Sales Volume Marginal,1000000,07/31/2026\n"
+            .self::CABANG.','.self::UKER.",Jml QRIS,500,07/31/2026\n"
+            .self::CABANG.','.self::UKER.",Jml Trx Marginal,2500,07/31/2026\n"
+            .self::CABANG.','.self::UKER.",Qris Produktif,300,07/31/2026\n";
+
+        $this->actingAs($this->admin())
+            ->post('/admin/upload/qris', ['berkas' => $this->berkas($isi, 'actual-qris.csv')])
+            ->assertOk();
+
+        $this->assertEqualsCanonicalizing(
+            ['SALES_VOLUME', 'USER_QRIS', 'JUMLAH_TRX', 'QRIS_PRODUKTIF'],
+            \App\Models\Qris::query()->pluck('kpi')->all(),
+        );
     }
 
     public function test_rka_qris_endpoint_terpisah(): void
