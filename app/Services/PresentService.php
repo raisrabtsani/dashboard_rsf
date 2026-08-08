@@ -78,6 +78,31 @@ class PresentService
     }
 
     /**
+     * Daftar tanggal posisi yang benar-benar tersedia untuk dropdown PRESENT.
+     *
+     * @return list<string>
+     */
+    public function daftarTanggalTersedia(int $batas = 120): array
+    {
+        return collect([...self::DPK, ...self::PINJAMAN, ...self::RECOVERY])
+            ->pluck(0)
+            ->unique()
+            ->flatMap(fn (string $tabel) => DB::table($tabel)
+                ->whereNotNull('tanggal')
+                ->select('tanggal')
+                ->distinct()
+                ->orderByDesc('tanggal')
+                ->limit($batas)
+                ->pluck('tanggal'))
+            ->map(fn (mixed $tanggal) => Carbon::parse($tanggal)->toDateString())
+            ->unique()
+            ->sortDesc()
+            ->take($batas)
+            ->values()
+            ->all();
+    }
+
+    /**
      * SLIDE 1 — Overview Region: DPK, Pinjaman, Recovery, Laba + %CASA + %LDR.
      *
      * @return array<string, mixed>
@@ -434,19 +459,17 @@ class PresentService
         $pinjaman['rincian'] = $this->rincianPinjaman($areaId, $tanggal);
         $recovery['rincian'] = $this->rincianRecovery($areaId, $tanggal);
 
-        $nilaiPinjaman = (float) ($pinjaman['nilai'] ?? 0);
-        $sml['rasio'] = $nilaiPinjaman > 0 && $sml['nilai'] !== null
-            ? round((float) $sml['nilai'] / $nilaiPinjaman * 100, 2)
-            : null;
-        $npl['rasio'] = $nilaiPinjaman > 0 && $npl['nilai'] !== null
-            ? round((float) $npl['nilai'] / $nilaiPinjaman * 100, 2)
-            : null;
+        $sml['rasio_detail'] = $this->rasioKualitas('%SML', Pinjaman::KUALITAS_SML, $areaId, $tanggal);
+        $npl['rasio_detail'] = $this->rasioKualitas('%NPL', Pinjaman::KUALITAS_NPL, $areaId, $tanggal);
+        $sml['rasio'] = $sml['rasio_detail']['nilai'];
+        $npl['rasio'] = $npl['rasio_detail']['nilai'];
 
         return [$dpk, $pinjaman, $sml, $npl, $recovery];
     }
 
     /**
-     * Rincian produk DPK pada tanggal posisi aktif.
+     * Rincian produk DPK pada tanggal posisi aktif, termasuk target serta delta
+     * MtD/YtD agar kartu PRESENT dapat menampilkan isi seperti ringkasan RSF.
      *
      * @return list<array<string, mixed>>
      */
@@ -459,13 +482,18 @@ class PresentService
         }
 
         $posisi = Carbon::parse($posisiTgl);
+        $mtdTgl = $this->tanggalTersedia(self::DPK, $areaId, $posisi->copy()->subMonthNoOverflow()->endOfMonth()->toDateString());
+        $ytdTgl = $this->tanggalTersedia(self::DPK, $areaId, $posisi->copy()->subYear()->endOfYear()->toDateString());
 
         return collect(Simpanan::PRODUK)
-            ->map(function (string $produk) use ($areaId, $posisiTgl, $posisi) {
-                $nilai = $this->total(self::DPK, $areaId, $posisiTgl, ['produk' => [$produk]]);
-                $target = $this->targetBulan(self::RKA_DPK, $areaId, $posisi->year, $posisi->month, ['produk' => [$produk]]);
+            ->map(function (string $produk) use ($areaId, $posisiTgl, $posisi, $mtdTgl, $ytdTgl) {
+                $filter = ['produk' => [$produk]];
+                $nilai = $this->total(self::DPK, $areaId, $posisiTgl, $filter);
+                $target = $this->targetBulan(self::RKA_DPK, $areaId, $posisi->year, $posisi->month, $filter);
+                $mtd = $mtdTgl === null ? null : $this->total(self::DPK, $areaId, $mtdTgl, $filter);
+                $ytd = $ytdTgl === null ? null : $this->total(self::DPK, $areaId, $ytdTgl, $filter);
 
-                return $this->rincianItem($produk, $nilai, $target);
+                return $this->rincianItem($produk, $nilai, $target, $mtd, $ytd);
             })
             ->all();
     }
@@ -485,6 +513,8 @@ class PresentService
         }
 
         $posisi = Carbon::parse($posisiTgl);
+        $mtdTgl = $this->tanggalTersedia(self::PINJAMAN, $areaId, $posisi->copy()->subMonthNoOverflow()->endOfMonth()->toDateString());
+        $ytdTgl = $this->tanggalTersedia(self::PINJAMAN, $areaId, $posisi->copy()->subYear()->endOfYear()->toDateString());
         $kelompok = [
             'Micro' => ['Mikro'],
             'SME' => ['Kecil', 'Menengah', 'Commercial', 'Komersial'],
@@ -492,11 +522,14 @@ class PresentService
         ];
 
         return collect($kelompok)
-            ->map(function (array $segmen, string $label) use ($areaId, $posisiTgl, $posisi) {
-                $nilai = $this->total(self::PINJAMAN, $areaId, $posisiTgl, ['segmen' => $segmen]);
-                $target = $this->targetBulan(self::RKA_PINJAMAN, $areaId, $posisi->year, $posisi->month, ['segmen' => $segmen]);
+            ->map(function (array $segmen, string $label) use ($areaId, $posisiTgl, $posisi, $mtdTgl, $ytdTgl) {
+                $filter = ['segmen' => $segmen];
+                $nilai = $this->total(self::PINJAMAN, $areaId, $posisiTgl, $filter);
+                $target = $this->targetBulan(self::RKA_PINJAMAN, $areaId, $posisi->year, $posisi->month, $filter);
+                $mtd = $mtdTgl === null ? null : $this->total(self::PINJAMAN, $areaId, $mtdTgl, $filter);
+                $ytd = $ytdTgl === null ? null : $this->total(self::PINJAMAN, $areaId, $ytdTgl, $filter);
 
-                return $this->rincianItem($label, $nilai, $target);
+                return $this->rincianItem($label, $nilai, $target, $mtd, $ytd);
             })
             ->values()
             ->all();
@@ -512,6 +545,8 @@ class PresentService
         }
 
         $posisi = Carbon::parse($posisiTgl);
+        $mtdTgl = $this->tanggalTersedia(self::RECOVERY, $areaId, $posisi->copy()->subMonthNoOverflow()->endOfMonth()->toDateString());
+        $ytdTgl = $this->tanggalTersedia(self::RECOVERY, $areaId, $posisi->copy()->subYear()->endOfYear()->toDateString());
         $kelompok = [
             'Micro' => array_values(array_unique([Recovery::SEGMEN_MICRO, ...(Recovery::SEGMEN_RAW[Recovery::SEGMEN_MICRO] ?? [])])),
             'SME' => array_values(array_unique([Recovery::SEGMEN_SME, ...(Recovery::SEGMEN_RAW[Recovery::SEGMEN_SME] ?? [])])),
@@ -519,18 +554,21 @@ class PresentService
         ];
 
         return collect($kelompok)
-            ->map(function (array $segmen, string $label) use ($areaId, $posisiTgl, $posisi) {
-                $nilai = $this->total(self::RECOVERY, $areaId, $posisiTgl, ['segmen' => $segmen]);
-                $target = $this->targetBulan(self::RKA_RECOVERY, $areaId, $posisi->year, $posisi->month, ['segmen' => $segmen]);
+            ->map(function (array $segmen, string $label) use ($areaId, $posisiTgl, $posisi, $mtdTgl, $ytdTgl) {
+                $filter = ['segmen' => $segmen];
+                $nilai = $this->total(self::RECOVERY, $areaId, $posisiTgl, $filter);
+                $target = $this->targetBulan(self::RKA_RECOVERY, $areaId, $posisi->year, $posisi->month, $filter);
+                $mtd = $mtdTgl === null ? null : $this->total(self::RECOVERY, $areaId, $mtdTgl, $filter);
+                $ytd = $ytdTgl === null ? null : $this->total(self::RECOVERY, $areaId, $ytdTgl, $filter);
 
-                return $this->rincianItem($label, $nilai, $target);
+                return $this->rincianItem($label, $nilai, $target, $mtd, $ytd);
             })
             ->values()
             ->all();
     }
 
     /** @return array<string, mixed> */
-    private function rincianItem(string $label, float $nilai, float $target): array
+    private function rincianItem(string $label, float $nilai, float $target, ?float $mtd, ?float $ytd): array
     {
         return [
             'label' => $label,
@@ -538,6 +576,83 @@ class PresentService
             'target' => Satuan::toJuta($target),
             'pencapaian' => $target > 0 ? round($nilai / $target * 100, 2) : null,
             'gap' => Satuan::toJuta($nilai - $target),
+            'delta' => [
+                'mtd' => Delta::hitung($nilai, $mtd),
+                'ytd' => Delta::hitung($nilai, $ytd),
+            ],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function rasioKualitas(string $label, string $kualitas, ?int $areaId, string $tanggal): array
+    {
+        $posisiTgl = $this->tanggalTersedia(self::PINJAMAN, $areaId, $tanggal);
+
+        if ($posisiTgl === null) {
+            return [
+                'label' => $label,
+                'nilai' => null,
+                'target' => null,
+                'pencapaian' => null,
+                'gap' => null,
+                'delta' => ['mtd' => Delta::kosong(), 'ytd' => Delta::kosong()],
+            ];
+        }
+
+        $posisi = Carbon::parse($posisiTgl);
+        $mtdTgl = $this->tanggalTersedia(self::PINJAMAN, $areaId, $posisi->copy()->subMonthNoOverflow()->endOfMonth()->toDateString());
+        $ytdTgl = $this->tanggalTersedia(self::PINJAMAN, $areaId, $posisi->copy()->subYear()->endOfYear()->toDateString());
+        $filter = ['kualitas' => [$kualitas]];
+
+        $nilai = $this->hitungRasio(
+            $this->total(self::PINJAMAN, $areaId, $posisiTgl, $filter),
+            $this->total(self::PINJAMAN, $areaId, $posisiTgl),
+        );
+        $mtd = $mtdTgl === null ? null : $this->hitungRasio(
+            $this->total(self::PINJAMAN, $areaId, $mtdTgl, $filter),
+            $this->total(self::PINJAMAN, $areaId, $mtdTgl),
+        );
+        $ytd = $ytdTgl === null ? null : $this->hitungRasio(
+            $this->total(self::PINJAMAN, $areaId, $ytdTgl, $filter),
+            $this->total(self::PINJAMAN, $areaId, $ytdTgl),
+        );
+        $target = $this->hitungRasio(
+            $this->targetBulan(self::RKA_PINJAMAN, $areaId, $posisi->year, $posisi->month, $filter),
+            $this->targetBulan(self::RKA_PINJAMAN, $areaId, $posisi->year, $posisi->month),
+        );
+
+        return [
+            'label' => $label,
+            'nilai' => $nilai,
+            'target' => $target,
+            'pencapaian' => ($nilai !== null && $target !== null && $target > 0)
+                ? round($nilai / $target * 100, 2)
+                : null,
+            'gap' => ($nilai === null || $target === null) ? null : round($nilai - $target, 2),
+            'delta' => [
+                'mtd' => $this->deltaRasio($nilai, $mtd),
+                'ytd' => $this->deltaRasio($nilai, $ytd),
+            ],
+        ];
+    }
+
+    private function hitungRasio(float $pembilang, float $penyebut): ?float
+    {
+        return $penyebut == 0.0 ? null : round($pembilang / $penyebut * 100, 2);
+    }
+
+    /** @return array{nilai: float|null, persen: float|null} */
+    private function deltaRasio(?float $aktual, ?float $pembanding): array
+    {
+        if ($aktual === null || $pembanding === null) {
+            return Delta::kosong();
+        }
+
+        return [
+            'nilai' => round($aktual - $pembanding, 2),
+            'persen' => $pembanding == 0.0
+                ? null
+                : round(($aktual - $pembanding) / abs($pembanding) * 100, 2),
         ];
     }
 

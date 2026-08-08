@@ -50,10 +50,17 @@ class UploadPhController extends Controller
             implode(', ', $hasil['periode']),
         );
 
-        if ($hasil['sumber'] > $hasil['baris']) {
+        $pesan .= sprintf(
+            ' SUMIF id_uker + tanggal: %s baris valid menjadi %s kombinasi; %s baris tergabung. Total sumber dan hasil cocok Rp %s.',
+            number_format($hasil['sumber'], 0, ',', '.'),
+            number_format($hasil['sumif']['kombinasi'], 0, ',', '.'),
+            number_format($hasil['sumif']['baris_tergabung'], 0, ',', '.'),
+            number_format($hasil['sumif']['total_hasil'], 2, ',', '.'),
+        );
+
+        if ($hasil['baris'] > $hasil['sumif']['kombinasi']) {
             $pesan .= sprintf(
-                ' %s baris berkas dijumlahkan jadi %s baris.',
-                number_format($hasil['sumber'], 0, ',', '.'),
+                ' Tersimpan sebagai %s baris karena rincian segmen tetap dipertahankan.',
                 number_format($hasil['baris'], 0, ',', '.'),
             );
         }
@@ -62,9 +69,16 @@ class UploadPhController extends Controller
             $pesan .= ' Periode yang sudah ada dilewati: '.implode(', ', $hasil['dilewati']).'.';
         }
 
+        if ($hasil['koreksi_cabang'] > 0) {
+            $pesan .= sprintf(
+                ' %s baris memakai cabang dari master id_uker karena id_cabang sumber berbeda/kosong.',
+                number_format($hasil['koreksi_cabang'], 0, ',', '.'),
+            );
+        }
+
         if ($hasil['fallback'] > 0) {
             $pesan .= sprintf(
-                ' %s baris tanpa uker valid dicatat di level cabang.',
+                ' %s baris tanpa id_uker valid dicatat di uker level cabang.',
                 number_format($hasil['fallback'], 0, ',', '.'),
             );
         }

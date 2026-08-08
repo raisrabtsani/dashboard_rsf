@@ -41,6 +41,8 @@ const props = defineProps({
     tahunIni: { type: Object, required: true },
 });
 
+const labelTahunPendek = (tahun) => `'${String(tahun).slice(-2)}`;
+
 const garisAkumulasi = (warna, label, data) => ({
     type: 'line',
     label,
@@ -48,18 +50,25 @@ const garisAkumulasi = (warna, label, data) => ({
     borderColor: warna,
     backgroundColor: warna,
     borderWidth: 2,
-    tension: 0.3,
+    tension: 0.25,
     pointRadius: 3,
+    pointHoverRadius: 4,
     spanGaps: false,
+    order: 0,
     datalabels: {
         align: 'top',
         anchor: 'end',
+        offset: 3,
         color: warna,
-        // Label akumulasi Januari PASTI menimpa label batangnya (nilainya sama
-        // persis di bulan pertama), jadi disembunyikan.
+        backgroundColor: 'rgba(255,255,255,0.95)',
+        borderColor: warna,
+        borderWidth: 1,
+        borderRadius: 3,
+        padding: { top: 2, right: 3, bottom: 2, left: 3 },
+        // Label akumulasi Januari menimpa label batang karena nilainya sama.
         display: (ctx) => ctx.dataIndex !== 0 && ctx.dataset.data[ctx.dataIndex] !== null,
         formatter: (v) => formatAngka(v),
-        font: { size: 10, weight: '600' },
+        font: { size: 8, weight: '700' },
     },
 });
 
@@ -68,24 +77,35 @@ const batang = (warna, label, data) => ({
     label,
     data,
     backgroundColor: warna,
+    borderColor: warna,
+    borderWidth: 0,
     borderRadius: 3,
+    borderSkipped: false,
+    maxBarThickness: 48,
+    order: 1,
     datalabels: {
         align: 'end',
         anchor: 'end',
+        offset: 2,
         color: warna,
+        backgroundColor: 'rgba(255,255,255,0.95)',
+        borderColor: warna,
+        borderWidth: 1,
+        borderRadius: 3,
+        padding: { top: 2, right: 3, bottom: 2, left: 3 },
         display: (ctx) => ctx.dataset.data[ctx.dataIndex] !== null,
         formatter: (v) => formatAngka(v),
-        font: { size: 9 },
+        font: { size: 8, weight: '700' },
     },
 });
 
 const data = computed(() => ({
     labels: props.labels,
     datasets: [
-        batang(MENTARI, `${props.tahunLalu.tahun}`, props.tahunLalu.bulanan),
-        batang(NUSANTARA, `${props.tahunIni.tahun}`, props.tahunIni.bulanan),
-        garisAkumulasi(MENTARI, `Akum ${props.tahunLalu.tahun}`, props.tahunLalu.akumulasi),
-        garisAkumulasi(NUSANTARA, `Akum ${props.tahunIni.tahun}`, props.tahunIni.akumulasi),
+        garisAkumulasi(MENTARI, `Akum ${labelTahunPendek(props.tahunLalu.tahun)}`, props.tahunLalu.akumulasi),
+        garisAkumulasi(NUSANTARA, `Akum ${labelTahunPendek(props.tahunIni.tahun)}`, props.tahunIni.akumulasi),
+        batang(MENTARI, `Delta ${labelTahunPendek(props.tahunLalu.tahun)}`, props.tahunLalu.bulanan),
+        batang(NUSANTARA, `Delta ${labelTahunPendek(props.tahunIni.tahun)}`, props.tahunIni.bulanan),
     ],
 }));
 
@@ -93,9 +113,20 @@ const options = computed(() => ({
     responsive: true,
     maintainAspectRatio: false,
     interaction: { mode: 'index', intersect: false },
-    layout: { padding: { top: 18 } },
+    layout: { padding: { top: 18, left: 2, right: 2, bottom: 0 } },
     plugins: {
-        legend: { position: 'bottom', labels: { boxWidth: 12, usePointStyle: true } },
+        legend: {
+            position: 'bottom',
+            labels: {
+                boxWidth: 10,
+                boxHeight: 10,
+                usePointStyle: true,
+                pointStyle: 'rect',
+                padding: 14,
+                color: '#64748b',
+                font: { size: 9, weight: '600' },
+            },
+        },
         tooltip: {
             callbacks: {
                 label: (ctx) =>
@@ -104,8 +135,27 @@ const options = computed(() => ({
         },
     },
     scales: {
-        y: { ticks: { callback: (v) => formatAngka(v) }, grid: { color: 'rgba(0,0,0,0.05)' } },
-        x: { grid: { display: false } },
+        y: {
+            border: { display: false },
+            ticks: {
+                callback: (v) => formatAngka(v),
+                color: '#94a3b8',
+                font: { size: 9 },
+                maxTicksLimit: 6,
+            },
+            grid: { color: 'rgba(148,163,184,0.20)', drawTicks: false },
+        },
+        x: {
+            border: { color: 'rgba(148,163,184,0.24)' },
+            ticks: { color: '#94a3b8', font: { size: 9 } },
+            grid: { display: false },
+        },
+    },
+    datasets: {
+        bar: {
+            categoryPercentage: 0.7,
+            barPercentage: 0.84,
+        },
     },
 }));
 </script>

@@ -24,6 +24,11 @@ use Illuminate\Support\Facades\DB;
  * kosong berarti "tidak punya target" (dilewati, bukan disimpan 0), dan datanya
  * di-UPSERT karena target boleh direvisi sepanjang tahun berjalan.
  *
+ * Berkas dapat memuat banyak baris target untuk unit kerja dan periode yang sama.
+ * Importer menjalankan SUMIF utama berdasarkan (id_uker, bulan, tahun). Rincian
+ * segmen tetap dipisahkan di dalam grup tersebut supaya filter segmen dashboard
+ * Recovery tidak rusak. Total sumber dan total hasil wajib sama.
+ *
  * Segmen disimpan MENTAH apa adanya — dinormalkan ke kanonik saat baca di
  * RecoveryService, sama seperti data aktualnya.
  */
@@ -47,11 +52,18 @@ class RkaRecoveryCsvImportService
     public const KOLOM = ['id_cabang', 'id_uker', 'segmen', 'tahun', 'bulan', 'target'];
 
     /**
-     * @return array{tahun: list<int>, baris: int, dilewati: int, total_target: float}
+     * @return array{
+     *   tahun:list<int>,baris:int,sumber:int,dilewati:int,total_target:float,
+     *   sumif:array{kriteria:list<string>,kombinasi:int,baris_tergabung:int,
+     *   total_sumber:float,total_hasil:float}
+     * }
      */
     public function impor(string $path, ?string $namaAsli = null): array
     {
-        ['baris' => $baris, 'dilewati' => $dilewati] = $this->baca($path, $namaAsli ?? basename($path));
+        ['baris' => $mentah, 'dilewati' => $dilewati] = $this->baca($path, $namaAsli ?? basename($path));
+
+        $baris = $this->jumlahkan($mentah);
+        $auditSumif = $this->auditSumif($mentah, $baris);
 
         DB::transaction(function () use ($baris) {
             $baris->chunk(1000)->each(fn (Collection $potongan) => RkaRecovery::query()->upsert(
@@ -64,8 +76,10 @@ class RkaRecoveryCsvImportService
         return [
             'tahun' => $baris->pluck('tahun')->unique()->sort()->values()->all(),
             'baris' => $baris->count(),
+            'sumber' => $mentah->count(),
             'dilewati' => $dilewati,
             'total_target' => (float) $baris->sum(fn (array $b) => $b['target']),
+            'sumif' => $auditSumif,
             'laporan' => $this->laporanImport(),
         ];
     }
@@ -105,10 +119,9 @@ class RkaRecoveryCsvImportService
         $baris = PetaKolom::petakan($mentah, self::ALIAS, self::KOLOM, $namaBerkas);
 
         $ukerValid = Uker::query()->pluck('cabang_id', 'id');
-        $now = Carbon::now();
         $dilewati = 0;
 
-        $hasil = $this->petakanBarisAman($baris, function (array $r, int $i) use ($ukerValid, $now, &$dilewati) {
+        $hasil = $this->petakanBarisAman($baris, function (array $r, int $i) use ($ukerValid, &$dilewati) {
             $nomor = $i + 2;
 
             $ukerId = (int) trim((string) $r['id_uker']);
@@ -141,8 +154,6 @@ class RkaRecoveryCsvImportService
                 'tahun' => $tahun,
                 'bulan' => Bulan::uraiAtauGagal((string) $r['bulan'], $nomor),
                 'target' => $this->angka($r['target'], $nomor),
-                'created_at' => $now,
-                'updated_at' => $now,
             ];
         });
 
@@ -162,25 +173,71 @@ class RkaRecoveryCsvImportService
     }
 
     /**
-     * upsert() hanya menyimpan satu dari baris berkunci sama, jadi tanpa
-     * pemeriksaan ini sebagian target hilang tanpa pemberitahuan.
+     * SUMIF utama berdasarkan id_uker + bulan + tahun. Rincian segmen tetap
+     * dipertahankan di dalam setiap kombinasi agar target per segmen tetap dapat
+     * dipakai dashboard.
      *
-     * @param  Collection<int, array<string, mixed>>  $baris
+     * @param  Collection<int, array<string, mixed>>  $mentah
+     * @return Collection<int, array<string, mixed>>
      */
-    private function tolakBarisKembar(Collection $baris, string $namaBerkas): void
+    private function jumlahkan(Collection $mentah): Collection
     {
-        $kembar = $baris
-            ->groupBy(fn (array $b) => implode('|', [$b['uker_id'], $b['segmen'], $b['tahun'], $b['bulan']]))
-            ->filter(fn (Collection $g) => $g->count() > 1);
+        $now = Carbon::now();
 
-        if ($kembar->isNotEmpty()) {
+        return $mentah
+            ->groupBy(fn (array $r) => implode('|', [$r['uker_id'], $r['bulan'], $r['tahun']]))
+            ->flatMap(function (Collection $grupUkerPeriode) use ($now) {
+                return $grupUkerPeriode
+                    ->groupBy('segmen')
+                    ->map(function (Collection $grupSegmen) use ($now) {
+                        $pertama = $grupSegmen->first();
+
+                        return [
+                            'cabang_id' => $pertama['cabang_id'],
+                            'uker_id' => $pertama['uker_id'],
+                            'segmen' => $pertama['segmen'],
+                            'tahun' => $pertama['tahun'],
+                            'bulan' => $pertama['bulan'],
+                            'target' => (float) $grupSegmen->sum(fn (array $r) => $r['target']),
+                            'created_at' => $now,
+                            'updated_at' => $now,
+                        ];
+                    })
+                    ->values();
+            })
+            ->values();
+    }
+
+    /**
+     * Audit SUMIF memastikan seluruh target sumber ikut terjumlahkan.
+     *
+     * @param  Collection<int, array<string, mixed>>  $mentah
+     * @param  Collection<int, array<string, mixed>>  $agregat
+     * @return array{kriteria:list<string>,kombinasi:int,baris_tergabung:int,total_sumber:float,total_hasil:float}
+     */
+    private function auditSumif(Collection $mentah, Collection $agregat): array
+    {
+        $kombinasi = $mentah
+            ->groupBy(fn (array $r) => implode('|', [$r['uker_id'], $r['bulan'], $r['tahun']]))
+            ->count();
+
+        $totalSumber = round((float) $mentah->sum(fn (array $r) => $r['target']), 2);
+        $totalHasil = round((float) $agregat->sum(fn (array $r) => $r['target']), 2);
+
+        if (abs($totalSumber - $totalHasil) > 0.01) {
             throw ImportException::berkas(sprintf(
-                '%s memuat %d kombinasi uker+segmen+tahun+bulan yang kembar, contoh: %s. '.
-                'Gabungkan dulu baris kembar tersebut.',
-                $namaBerkas,
-                $kembar->count(),
-                $kembar->keys()->take(3)->implode('; '),
+                'Audit SUMIF RKA Recovery gagal: total sumber Rp %s tidak sama dengan total hasil Rp %s.',
+                number_format($totalSumber, 2, ',', '.'),
+                number_format($totalHasil, 2, ',', '.'),
             ));
         }
+
+        return [
+            'kriteria' => ['id_uker', 'bulan', 'tahun'],
+            'kombinasi' => $kombinasi,
+            'baris_tergabung' => max(0, $mentah->count() - $kombinasi),
+            'total_sumber' => $totalSumber,
+            'total_hasil' => $totalHasil,
+        ];
     }
 }

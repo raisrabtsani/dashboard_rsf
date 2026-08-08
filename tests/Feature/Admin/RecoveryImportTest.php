@@ -256,17 +256,48 @@ class RecoveryImportTest extends TestCase
         $this->assertSame(1, $respons->json('hasil.dilewati'));
     }
 
-    public function test_rka_menolak_baris_kembar(): void
+    public function test_rka_target_dijumlahkan_per_id_uker_bulan_dan_tahun_yang_sama(): void
     {
         $isi = "id_cabang,id_uker,segmen,tahun,bulan,target\n"
             .self::CABANG.','.self::UKER.",SME,2026,6,100000000\n"
+            .self::CABANG.','.self::UKER.",SME,2026,6,200000000\n"
+            .self::CABANG.','.self::UKER.",SME,2026,6,50000000\n";
+
+        $respons = $this->unggahRka($isi)->assertOk();
+
+        $this->assertSame(1, RkaRecovery::query()->count());
+        $this->assertSame(350_000_000.0, (float) RkaRecovery::query()->value('target'));
+        $this->assertSame(3, $respons->json('hasil.sumber'));
+        $this->assertSame(1, $respons->json('hasil.baris'));
+        $this->assertSame(['id_uker', 'bulan', 'tahun'], $respons->json('hasil.sumif.kriteria'));
+        $this->assertSame(1, $respons->json('hasil.sumif.kombinasi'));
+        $this->assertSame(2, $respons->json('hasil.sumif.baris_tergabung'));
+        $this->assertSame(350_000_000.0, (float) $respons->json('hasil.sumif.total_sumber'));
+        $this->assertSame(350_000_000.0, (float) $respons->json('hasil.sumif.total_hasil'));
+    }
+
+    public function test_rka_sumif_tetap_mempertahankan_rincian_segmen(): void
+    {
+        $isi = "id_cabang,id_uker,segmen,tahun,bulan,target\n"
+            .self::CABANG.','.self::UKER.",Micro,2026,6,100000000\n"
+            .self::CABANG.','.self::UKER.",Micro,2026,6,50000000\n"
             .self::CABANG.','.self::UKER.",SME,2026,6,200000000\n";
 
-        $respons = $this->unggahRka($isi);
+        $respons = $this->unggahRka($isi)->assertOk();
 
-        $respons->assertStatus(422);
-        $this->assertStringContainsString('kembar', $respons->json('message'));
-        $this->assertSame(0, RkaRecovery::query()->count());
+        // SUMIF utama hanya memiliki satu kombinasi uker+bulan+tahun, tetapi
+        // rincian Micro dan SME tetap hidup agar filter segmen dashboard aman.
+        $this->assertSame(1, $respons->json('hasil.sumif.kombinasi'));
+        $this->assertSame(2, RkaRecovery::query()->count());
+        $this->assertSame(
+            150_000_000.0,
+            (float) RkaRecovery::query()->where('segmen', 'Micro')->value('target'),
+        );
+        $this->assertSame(
+            200_000_000.0,
+            (float) RkaRecovery::query()->where('segmen', 'SME')->value('target'),
+        );
+        $this->assertSame(350_000_000.0, (float) RkaRecovery::query()->sum('target'));
     }
 
     public function test_hapus_rka_per_tahun(): void

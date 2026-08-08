@@ -42,10 +42,20 @@ class RkaRecoveryController extends Controller
         }
 
         $pesan = sprintf(
-            '%s baris RKA tahun %s tersimpan.',
+            '%s baris sumber dihitung dengan SUMIF id_uker + bulan + tahun menjadi %s baris RKA tahun %s. Total target Rp %s.',
+            number_format($hasil['sumber'], 0, ',', '.'),
             number_format($hasil['baris'], 0, ',', '.'),
             implode(', ', $hasil['tahun']),
+            number_format($hasil['total_target'], 2, ',', '.'),
         );
+
+        if ($hasil['sumif']['baris_tergabung'] > 0) {
+            $pesan .= sprintf(
+                ' %s baris sumber tergabung dalam %s kombinasi id_uker, bulan, dan tahun.',
+                number_format($hasil['sumif']['baris_tergabung'], 0, ',', '.'),
+                number_format($hasil['sumif']['kombinasi'], 0, ',', '.'),
+            );
+        }
 
         if ($hasil['dilewati'] > 0) {
             $pesan .= sprintf(

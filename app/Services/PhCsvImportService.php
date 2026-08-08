@@ -23,9 +23,14 @@ use Throwable;
  *
  * TIGA perilaku khas domain ini:
  *
- *  1. Berkas berisi banyak baris per kombinasi (satu baris per debitur/akun);
- *     saldo DIJUMLAHKAN per (uker, segmen, periode) sebelum disimpan.
- *  2. Baris yang id_uker-nya kosong/tidak dikenal TIDAK dibuang — di-fallback ke
+ *  1. Berkas berisi banyak baris per debitur/akun. Importer melakukan SUMIF
+ *     utama berdasarkan (id_uker, periode). Di dalam tiap hasil SUMIF, rincian
+ *     segmen tetap dipisahkan agar filter segmen PH/Net DG tidak rusak.
+ *     Total semua rincian wajib sama dengan total sumber; bila berbeda, impor
+ *     dihentikan agar tidak ada saldo yang hilang.
+ *  2. id_uker adalah sumber kebenaran organisasi. Jika id_uker valid, cabang_id
+ *     selalu diambil dari master uker meskipun kolom id_cabang di berkas berbeda.
+ *     Baris yang id_uker-nya kosong/tidak dikenal TIDAK dibuang — di-fallback ke
  *     level cabang (uker_id = cabang_id) supaya nilainya tetap masuk total.
  *     Membuangnya akan membuat Net DG salah tanpa ada tandanya.
  *  3. Periode yang datanya SUDAH ADA di-LEWATI (skip), bukan membatalkan seluruh
@@ -50,12 +55,22 @@ class PhCsvImportService
     public const KOLOM = ['id_cabang', 'id_uker', 'segmen', 'periode', 'saldo'];
 
     /**
-     * @return array{periode: list<string>, baris: int, sumber: int, dilewati: list<string>, fallback: int, total: float}
+     * @return array{
+     *   periode:list<string>,baris:int,sumber:int,dilewati:list<string>,fallback:int,
+     *   koreksi_cabang:int,total:float,sumif:array{kriteria:list<string>,kombinasi:int,
+     *   baris_tergabung:int,total_sumber:float,total_hasil:float}
+     * }
      */
     public function impor(string $path, ?string $namaAsli = null, bool $timpa = false): array
     {
         $mentah = $this->baca($path, $namaAsli ?? basename($path));
+
+        if ($mentah->isEmpty()) {
+            throw ImportException::berkas('Tidak ada baris PH valid yang dapat dihitung. Periksa id_uker, periode, segmen, dan saldo.');
+        }
+
         $agregat = $this->jumlahkan($mentah);
+        $auditSumif = $this->auditSumif($mentah, $agregat);
 
         $periodeBerkas = $agregat->pluck('periode')->unique()->sort()->values();
         $dilewati = collect();
@@ -75,7 +90,9 @@ class PhCsvImportService
             'sumber' => $mentah->count(),
             'dilewati' => $dilewati->all(),
             'fallback' => $mentah->where('fallback', true)->count(),
+            'koreksi_cabang' => $mentah->where('cabang_dikoreksi', true)->count(),
             'total' => (float) $masuk->sum(fn (array $b) => $b['saldo']),
+            'sumif' => $auditSumif,
             'laporan' => $this->laporanImport(),
         ];
     }
@@ -160,21 +177,64 @@ class PhCsvImportService
     {
         $now = Carbon::now();
 
+        // Tahap 1 = SUMIF utama sesuai permintaan bisnis:
+        // seluruh saldo dengan id_uker dan periode yang sama masuk ke satu grup.
+        // Tahap 2 hanya mempertahankan rincian segmen di dalam grup tersebut,
+        // karena dashboard PH masih menyediakan filter segmen.
         return $mentah
-            ->groupBy(fn (array $r) => implode('|', [$r['uker_id'], $r['segmen'], $r['periode']]))
-            ->map(function (Collection $grup) use ($now) {
-                $pertama = $grup->first();
+            ->groupBy(fn (array $r) => implode('|', [$r['uker_id'], $r['periode']]))
+            ->flatMap(function (Collection $grupUkerPeriode) use ($now) {
+                return $grupUkerPeriode
+                    ->groupBy('segmen')
+                    ->map(function (Collection $grupSegmen) use ($now) {
+                        $pertama = $grupSegmen->first();
 
-                return [
-                    'cabang_id' => $pertama['cabang_id'],
-                    'uker_id' => $pertama['uker_id'],
-                    'segmen' => $pertama['segmen'],
-                    'periode' => $pertama['periode'],
-                    'saldo' => (float) $grup->sum(fn (array $r) => $r['saldo']),
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ];
-            });
+                        return [
+                            'cabang_id' => $pertama['cabang_id'],
+                            'uker_id' => $pertama['uker_id'],
+                            'segmen' => $pertama['segmen'],
+                            'periode' => $pertama['periode'],
+                            'saldo' => (float) $grupSegmen->sum(fn (array $r) => $r['saldo']),
+                            'created_at' => $now,
+                            'updated_at' => $now,
+                        ];
+                    })
+                    ->values();
+            })
+            ->values();
+    }
+
+    /**
+     * Audit SUMIF untuk memastikan tidak ada saldo sumber yang tertinggal.
+     *
+     * @param  Collection<int, array<string, mixed>>  $mentah
+     * @param  Collection<int, array<string, mixed>>  $agregat
+     * @return array{kriteria:list<string>,kombinasi:int,baris_tergabung:int,total_sumber:float,total_hasil:float}
+     */
+    private function auditSumif(Collection $mentah, Collection $agregat): array
+    {
+        $kombinasi = $mentah
+            ->groupBy(fn (array $r) => implode('|', [$r['uker_id'], $r['periode']]))
+            ->count();
+
+        $totalSumber = round((float) $mentah->sum(fn (array $r) => $r['saldo']), 2);
+        $totalHasil = round((float) $agregat->sum(fn (array $r) => $r['saldo']), 2);
+
+        if (abs($totalSumber - $totalHasil) > 0.01) {
+            throw ImportException::berkas(sprintf(
+                'Audit SUMIF gagal: total sumber Rp %s tidak sama dengan total hasil Rp %s.',
+                number_format($totalSumber, 2, ',', '.'),
+                number_format($totalHasil, 2, ',', '.'),
+            ));
+        }
+
+        return [
+            'kriteria' => ['id_uker', 'periode'],
+            'kombinasi' => $kombinasi,
+            'baris_tergabung' => max(0, $mentah->count() - $kombinasi),
+            'total_sumber' => $totalSumber,
+            'total_hasil' => $totalHasil,
+        ];
     }
 
     /**
@@ -191,19 +251,28 @@ class PhCsvImportService
         return $this->petakanBarisAman($baris, function (array $r, int $i) use ($ukerValid, $cabangValid) {
             $nomor = $i + 2;
 
-            $cabangId = (int) trim((string) $r['id_cabang']);
+            $cabangMentah = trim((string) $r['id_cabang']);
+            $cabangIdBerkas = (int) $cabangMentah;
             $ukerMentah = trim((string) $r['id_uker']);
             $ukerId = (int) $ukerMentah;
+            $ukerDikenal = $ukerMentah !== '' && $ukerValid->has($ukerId);
+            $fallback = ! $ukerDikenal;
+            $cabangDikoreksi = false;
 
-            if (! $cabangValid->contains($cabangId)) {
-                throw ImportException::berkas("Baris {$nomor}: id_cabang {$cabangId} tidak ada di master cabang.");
-            }
+            if ($ukerDikenal) {
+                // SUMIF wajib konsisten berdasarkan id_uker. Karena itu cabang
+                // diturunkan dari master uker, bukan dijadikan kriteria grup.
+                $cabangId = (int) $ukerValid[$ukerId];
+                $cabangDikoreksi = $cabangMentah === '' || $cabangIdBerkas !== $cabangId;
+            } else {
+                if ($cabangMentah === '' || ! $cabangValid->contains($cabangIdBerkas)) {
+                    throw ImportException::berkas(
+                        "Baris {$nomor}: id_uker '{$ukerMentah}' tidak dikenal dan id_cabang '{$cabangMentah}' tidak valid.",
+                    );
+                }
 
-            // FALLBACK KE LEVEL CABANG: baris tanpa uker valid tetap dihitung,
-            // ditempelkan ke baris master uker milik cabangnya (uker_id = cabang_id).
-            $fallback = $ukerMentah === '' || ! $ukerValid->has($ukerId) || $ukerValid[$ukerId] !== $cabangId;
-
-            if ($fallback) {
+                // Fallback hanya dipakai jika id_uker memang kosong/tidak dikenal.
+                $cabangId = $cabangIdBerkas;
                 $ukerId = $cabangId;
 
                 if (! $ukerValid->has($ukerId)) {
@@ -231,6 +300,7 @@ class PhCsvImportService
                 'periode' => $this->periode($r['periode'], $nomor),
                 'saldo' => $this->angka($r['saldo'], $nomor),
                 'fallback' => $fallback,
+                'cabang_dikoreksi' => $cabangDikoreksi,
             ];
         });
     }

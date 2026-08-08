@@ -11,6 +11,7 @@ import { formatAngka, formatDelta, formatPct } from '@/utils/formatAngka';
 
 const props = defineProps({
     tanggalAwal: { type: String, required: true },
+    tanggalTersedia: { type: Array, default: () => [] },
 });
 
 const tanggal = ref(props.tanggalAwal);
@@ -21,7 +22,10 @@ const memuat = ref(false);
 
 const kartuRegion = computed(() => overview.value?.kartu ?? []);
 const rasio = computed(() => overview.value?.rasio ?? []);
-const blokArea = computed(() => area.value?.area ?? []);
+const blokArea = computed(() => (area.value?.area ?? []).filter((item) => {
+    const nama = String(item?.nama ?? '').trim();
+    return nama !== '' && !/\b(?:kanwil|region)\b/i.test(nama);
+}));
 const tabelDetail = computed(() => detail.value?.tabel ?? []);
 const trend = computed(() => overview.value?.trend ?? {});
 
@@ -32,6 +36,16 @@ const tanggalLabel = computed(() => {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(tanggal.value);
     return m ? `${Number(m[3])} ${NAMA_BULAN[Number(m[2]) - 1]} ${m[1]}` : tanggal.value;
 });
+
+const opsiTanggal = computed(() => {
+    const daftar = [tanggal.value, ...props.tanggalTersedia].filter(Boolean);
+    return [...new Set(daftar)].sort((a, b) => b.localeCompare(a));
+});
+
+function formatTanggalOpsi(value) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    return m ? `${Number(m[3])} ${NAMA_BULAN_PENDEK[Number(m[2]) - 1]} ${m[1]}` : value;
+}
 
 const inverse = (key) => ['sml', 'npl'].includes(key);
 const cardByKey = (key) => kartuRegion.value.find((item) => item.key === key) ?? null;
@@ -136,7 +150,7 @@ onMounted(muat);
                 <section class="relative overflow-hidden rounded-[20px] border border-[#2a73d6] bg-gradient-to-r from-[#0654bf] via-[#0a66d3] to-[#1f7ce0] px-4 py-4 text-white shadow-[0_14px_34px_rgba(10,82,181,0.25)] sm:px-5">
                     <div class="pointer-events-none absolute inset-0 opacity-[0.08]" style="background-image: linear-gradient(135deg, transparent 0 46%, rgba(255,255,255,.45) 47% 48%, transparent 49% 100%); background-size: 140px 140px;" />
                     <div class="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full bg-white/10" />
-                    <div class="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div class="relative flex items-center">
                         <div class="flex items-center gap-3">
                             <div class="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-white/10 p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.2)] ring-1 ring-white/20">
                                 <img src="/overview-logo.png" alt="RSF" class="h-full w-full object-contain" />
@@ -144,28 +158,30 @@ onMounted(muat);
                             <div>
                                 <p class="text-[11px] font-bold uppercase tracking-[0.18em] text-cyan-100/85">Highlight Kinerja</p>
                                 <h1 class="mt-1 text-2xl font-black leading-none tracking-tight sm:text-[2rem]">Region 7 Jakarta 2</h1>
-                                <div class="mt-2 inline-flex items-center gap-2 rounded-lg bg-white/12 px-3 py-1 text-[11px] font-semibold text-white/90">
-                                    <span class="h-2 w-2 rounded-full bg-emerald-300" />
-                                    Posisi {{ tanggalLabel }}
+                                <div class="mt-2 inline-flex items-center gap-2 rounded-xl bg-white/12 p-1 pl-3 ring-1 ring-white/15 backdrop-blur">
+                                    <label for="present-tanggal" class="text-[10px] font-black uppercase tracking-[0.08em] text-white">Posisi</label>
+                                    <div class="relative">
+                                        <select
+                                            id="present-tanggal"
+                                            v-model="tanggal"
+                                            class="h-8 min-w-[145px] appearance-none rounded-lg border border-white/20 bg-white/10 py-1 pl-3 pr-8 text-xs font-bold text-white shadow-sm focus:border-cyan-200 focus:ring-cyan-200"
+                                            aria-label="Pilih tanggal posisi"
+                                            @change="muat"
+                                        >
+                                            <option
+                                                v-for="opsi in opsiTanggal"
+                                                :key="opsi"
+                                                :value="opsi"
+                                                class="bg-white text-slate-800"
+                                            >
+                                                {{ formatTanggalOpsi(opsi) }}
+                                            </option>
+                                        </select>
+                                        <svg class="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-white" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                                            <path d="m6 8 4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+                                        </svg>
+                                    </div>
                                 </div>
-                            </div>
-                        </div>
-
-                        <div class="flex items-end gap-3 self-end lg:self-auto">
-                            <div class="rounded-xl bg-white/10 px-3 py-2 backdrop-blur ring-1 ring-white/15">
-                                <label class="block text-[9px] font-bold uppercase tracking-[0.16em] text-white/65">Tanggal Posisi</label>
-                                <input
-                                    v-model="tanggal"
-                                    type="date"
-                                    class="mt-1 rounded-lg border-white/20 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 shadow-sm focus:border-cyan-300 focus:ring-cyan-300"
-                                    @change="muat"
-                                />
-                            </div>
-                            <div class="hidden items-end gap-1 xl:flex" aria-hidden="true">
-                                <div class="h-12 w-5 rounded-t-md bg-white/35" />
-                                <div class="h-16 w-5 rounded-t-md bg-white/45" />
-                                <div class="h-20 w-5 rounded-t-md bg-white/55" />
-                                <div class="h-24 w-5 rounded-t-md bg-white/65" />
                             </div>
                         </div>
                     </div>
@@ -187,6 +203,7 @@ onMounted(muat);
                             :inverse="inverse(k.key)"
                             :rincian="k.rincian ?? []"
                             :rasio="k.rasio ?? null"
+                            :rasio-detail="k.rasio_detail ?? null"
                         />
                     </div>
 
@@ -212,7 +229,7 @@ onMounted(muat);
                     </div>
                 </section>
 
-                <section class="space-y-2">
+                <section v-if="blokArea.length" class="space-y-2">
                     <div
                         v-for="a in blokArea"
                         :key="a.area_id"
@@ -220,7 +237,7 @@ onMounted(muat);
                     >
                         <div class="mb-2 flex items-center justify-between gap-3 px-1 text-white">
                             <div>
-                                <p class="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-100/80">Area Highlight</p>
+                                <p class="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-100/80">Area Head</p>
                                 <h3 class="text-sm font-black uppercase tracking-wide">{{ a.nama }}</h3>
                             </div>
                             <span class="rounded-lg bg-white/12 px-2.5 py-1 text-[10px] font-semibold ring-1 ring-white/15">Posisi {{ tanggalLabel }}</span>
@@ -240,6 +257,7 @@ onMounted(muat);
                                 :inverse="inverse(k.key)"
                                 :rincian="k.rincian ?? []"
                                 :rasio="k.rasio ?? null"
+                                :rasio-detail="k.rasio_detail ?? null"
                                 compact
                             />
                         </div>
@@ -355,15 +373,17 @@ onMounted(muat);
                             </div>
                             <span class="rounded-full bg-blue-50 px-3 py-1 text-[10px] font-semibold text-blue-700 ring-1 ring-blue-100">Posisi {{ tanggalLabel }}</span>
                         </div>
-                        <div class="grid grid-cols-1 gap-3 xl:grid-cols-3">
+                        <div class="grid grid-cols-1 items-stretch gap-3 xl:grid-cols-3">
                             <div
                                 v-for="c in chartCards.filter((item) => item.kartu)"
                                 :key="`chart-${c.key}`"
-                                class="rounded-[16px] border border-slate-200 p-3"
+                                class="flex h-full flex-col rounded-[16px] border border-slate-200 p-3"
                             >
-                                <div class="grid grid-cols-1 gap-3 lg:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-1">
+                                <div class="grid h-full grid-cols-1 gap-3 lg:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-1 xl:grid-rows-[286px_190px]">
                                     <PresentCard
                                         compact
+                                        stretch
+                                        class="h-full"
                                         :metric-key="c.kartu.key"
                                         :judul="c.kartu.judul"
                                         :nilai="c.kartu.nilai"
@@ -375,8 +395,10 @@ onMounted(muat);
                                         :inverse="inverse(c.kartu.key)"
                                         :rincian="c.kartu.rincian ?? []"
                                         :rasio="c.kartu.rasio ?? null"
+                                        :rasio-detail="c.kartu.rasio_detail ?? null"
+                                        summary
                                     />
-                                    <div class="rounded-[14px] border border-slate-100 p-2">
+                                    <div class="h-[190px] rounded-[14px] border border-slate-100 p-2">
                                         <LineChart
                                             v-if="chartMap[c.key]"
                                             :labels="chartMap[c.key].labels"

@@ -111,6 +111,17 @@ class LabaService
         $nilai = $this->nilaiPeriodeSegmen([[$tahun, $bulan], $prev, [$tahun - 1, $bulan]], $areaId, $cabangId, $ukerId);
         $target = $this->targetPerSegmen($tahun, $bulan, $areaId, $cabangId, $ukerId);
 
+        [$tahunBerikutnya, $bulanBerikutnya] = $bulan === 12
+            ? [$tahun + 1, 1]
+            : [$tahun, $bulan + 1];
+        $targetBerikutnya = $this->targetPerSegmen(
+            $tahunBerikutnya,
+            $bulanBerikutnya,
+            $areaId,
+            $cabangId,
+            $ukerId,
+        );
+
         $adaPosisi = isset($nilai[$posisiKunci]);
         $posisiNilai = $nilai[$posisiKunci] ?? [];
 
@@ -126,6 +137,11 @@ class LabaService
                 : ($key === 'total' ? array_sum($posisiNilai) : (float) ($posisiNilai[$key] ?? 0));
 
             $rka = $key === 'total' ? array_sum($target) : (float) ($target[$key] ?? 0);
+            $rkaBerikutnya = $targetBerikutnya === []
+                ? null
+                : ($key === 'total'
+                    ? array_sum($targetBerikutnya)
+                    : (float) ($targetBerikutnya[$key] ?? 0));
 
             $delta = [
                 'mtd' => $this->deltaMtd($aktual, $bulan, $key, $bulan > 1 ? ($nilai[$prevKunci] ?? null) : null),
@@ -140,6 +156,9 @@ class LabaService
                 'nilai' => Satuan::toJuta($aktual),
                 'delta' => $delta,
                 'target' => Satuan::toJuta($rka),
+                'target_berikutnya' => Satuan::toJuta($rkaBerikutnya),
+                'target_berikutnya_tahun' => $tahunBerikutnya,
+                'target_berikutnya_bulan' => $bulanBerikutnya,
                 'pencapaian' => ($aktual !== null && $rka > 0) ? round($aktual / $rka * 100, 2) : null,
                 'gap' => $aktual === null ? null : Satuan::toJuta($aktual - $rka),
             ];
@@ -269,6 +288,13 @@ class LabaService
             ->selectRaw("{$kolom} as entitas_id, SUM(laba) as total")
             ->pluck('total', 'entitas_id');
 
+        $desemberTahunLalu = $tanpaRegion($this->dasar($areaId, $cabangId, $ukerId))
+            ->where('tahun', $tahun - 1)
+            ->where('bulan', 12)
+            ->groupBy($kolom)
+            ->selectRaw("{$kolom} as entitas_id, SUM(laba) as total")
+            ->pluck('total', 'entitas_id');
+
         $target = $this->filterOrganisasi(
             RkaLaba::query()->where('cabang_id', '!=', self::EXCLUDED_REGION_ID),
             $perUker ? null : $areaId,
@@ -283,6 +309,8 @@ class LabaService
 
         $ids = collect($aktual->keys())
             ->merge($target->keys())
+            ->merge($tahunLalu->keys())
+            ->merge($desemberTahunLalu->keys())
             ->unique()
             ->values();
 
@@ -290,17 +318,20 @@ class LabaService
             ? Uker::query()->with('cabang.area')->whereIn('id', $ids)->get()->keyBy('id')
             : Cabang::query()->with('area')->whereIn('id', $ids)->get()->keyBy('id');
 
-        $baris = $ids->map(function ($entitasId) use ($aktual, $bulanLalu, $tahunLalu, $target, $entitas, $bulan) {
+        $baris = $ids->map(function ($entitasId) use ($aktual, $bulanLalu, $tahunLalu, $desemberTahunLalu, $target, $entitas, $bulan) {
             $nilai = (float) ($aktual[$entitasId] ?? 0);
             $rka = (float) ($target[$entitasId] ?? 0);
             $prev = $bulan === 1 ? 0.0 : (isset($bulanLalu[$entitasId]) ? (float) $bulanLalu[$entitasId] : null);
             $yoyBase = isset($tahunLalu[$entitasId]) ? (float) $tahunLalu[$entitasId] : null;
+            $ytdBase = isset($desemberTahunLalu[$entitasId]) ? (float) $desemberTahunLalu[$entitasId] : null;
             $model = $entitas[$entitasId] ?? null;
 
             return [
                 'id' => (int) $entitasId,
                 'nama' => $model?->nama ?? (string) $entitasId,
                 'area_nama' => $model?->area?->nama ?? $model?->cabang?->area?->nama,
+                'posisi_bulan_lalu' => $yoyBase === null ? null : Satuan::toJuta($yoyBase),
+                'posisi_desember_lalu' => $ytdBase === null ? null : Satuan::toJuta($ytdBase),
                 'nilai' => Satuan::toJuta($nilai),
                 'target' => Satuan::toJuta($rka),
                 'pencapaian' => $rka > 0 ? round($nilai / $rka * 100, 2) : null,

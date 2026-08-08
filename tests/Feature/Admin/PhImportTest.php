@@ -102,6 +102,30 @@ class PhImportTest extends TestCase
         $this->assertSame(3_000_000.0, (float) Ph::query()->value('saldo'));
     }
 
+
+    public function test_sumif_diaudit_berdasarkan_id_uker_dan_periode(): void
+    {
+        $respons = $this->unggah($this->csv([
+            [self::CABANG, self::UKER, 'Micro', '2026-03-31', 1_000_000],
+            [self::CABANG, self::UKER, 'Micro', '2026-03-31', 2_000_000],
+            [self::CABANG, self::UKER, 'Consumer', '2026-03-31', 3_000_000],
+            [self::CABANG, self::UKER, 'Micro', '2026-04-30', 4_000_000],
+        ]))->assertOk();
+
+        // Dua kombinasi SUMIF: UKER+Maret dan UKER+April.
+        $this->assertSame(2, $respons->json('hasil.sumif.kombinasi'));
+        $this->assertSame(2, $respons->json('hasil.sumif.baris_tergabung'));
+        $this->assertSame(10_000_000.0, (float) $respons->json('hasil.sumif.total_sumber'));
+        $this->assertSame(10_000_000.0, (float) $respons->json('hasil.sumif.total_hasil'));
+
+        // Rincian segmen tetap disimpan agar filter segmen tidak rusak.
+        $this->assertSame(3, Ph::query()->count());
+        $this->assertSame(
+            6_000_000.0,
+            (float) Ph::query()->where('periode', '2026-03-31')->sum('saldo'),
+        );
+    }
+
     // --- Fallback uker ----------------------------------------------------
 
     public function test_uker_kosong_jatuh_ke_level_cabang(): void
@@ -127,21 +151,38 @@ class PhImportTest extends TestCase
         $this->assertSame(7_000_000.0, (float) Ph::query()->value('saldo'));
     }
 
-    public function test_uker_milik_cabang_lain_jatuh_ke_cabang_di_berkas(): void
+    public function test_id_uker_menjadi_sumber_kebenaran_cabang_dan_tetap_disumif(): void
     {
-        // Uker 5438 milik cabang 159, tapi berkas menulis cabang 621.
-        $this->unggah($this->csv([
+        // Uker 5438 milik cabang 159. Dua baris menulis id_cabang berbeda,
+        // tetapi karena id_uker sama dan periodenya sama, saldo wajib tersumif.
+        $respons = $this->unggah($this->csv([
             [621, self::UKER, 'Micro', '2026-03-31', 3_000_000],
+            [self::CABANG, self::UKER, 'Micro', '2026-03-31', 2_000_000],
         ]))->assertOk();
 
-        $this->assertSame(621, Ph::query()->value('cabang_id'));
-        $this->assertSame(621, Ph::query()->value('uker_id'));
+        $this->assertSame(1, Ph::query()->count());
+        $this->assertSame(self::CABANG, Ph::query()->value('cabang_id'));
+        $this->assertSame(self::UKER, Ph::query()->value('uker_id'));
+        $this->assertSame(5_000_000.0, (float) Ph::query()->value('saldo'));
+        $this->assertSame(1, $respons->json('hasil.koreksi_cabang'));
+        $this->assertSame(1, $respons->json('hasil.sumif.kombinasi'));
     }
 
-    public function test_cabang_tak_dikenal_tetap_ditolak(): void
+    public function test_cabang_tak_dikenal_dikoreksi_bila_id_uker_valid(): void
+    {
+        $respons = $this->unggah($this->csv([
+            [999999, self::UKER, 'Micro', '2026-03-31', 1_000_000],
+        ]))->assertOk();
+
+        $this->assertSame(self::CABANG, Ph::query()->value('cabang_id'));
+        $this->assertSame(self::UKER, Ph::query()->value('uker_id'));
+        $this->assertSame(1, $respons->json('hasil.koreksi_cabang'));
+    }
+
+    public function test_id_uker_dan_id_cabang_sama_sama_tidak_valid_ditolak(): void
     {
         $this->unggah($this->csv([
-            [999999, self::UKER, 'Micro', '2026-03-31', 1_000_000],
+            [999999, 888888, 'Micro', '2026-03-31', 1_000_000],
         ]))->assertStatus(422);
 
         $this->assertSame(0, Ph::query()->count());

@@ -372,6 +372,7 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
     Route::prefix('upload/pinjaman-commercial')->name('upload.pinjaman-commercial.')->group(function () {
         Route::get('/', [UploadPinjamanCommercialController::class, 'index'])->name('index');
         Route::get('riwayat', [UploadPinjamanCommercialController::class, 'riwayat'])->name('riwayat');
+        Route::post('preview', [UploadPinjamanCommercialController::class, 'preview'])->name('preview');
         Route::post('/', [UploadPinjamanCommercialController::class, 'upload'])->name('store');
         Route::get('unduh/{tanggal}', [UploadPinjamanCommercialController::class, 'unduh'])->name('unduh');
         Route::delete('bulk-month', [UploadPinjamanCommercialController::class, 'hapusBulan'])->name('bulk-month');

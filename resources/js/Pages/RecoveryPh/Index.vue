@@ -40,7 +40,7 @@ const dirty = computed(() =>
 const opsi = reactive({ area: [], cabang: [], uker: [] });
 const snapshot = ref(null);
 const chart = ref(null);
-const branch = ref({ grouping: 'cabang', baris: [], periode_lalu: null, desember_lalu: null, periode: null });
+const branch = ref({ grouping: 'cabang', baris: [], bulan_sebelumnya: null, periode_lalu: null, desember_lalu: null, periode: null });
 const drilldown = ref(null);
 const scopeTabel = ref('total');
 const memuat = reactive({ kartu: false, chart: false, tabel: false });
@@ -118,8 +118,61 @@ function bulanPendek(periode) {
     return m ? `${NAMA_BULAN[Number(m[2]) - 1].slice(0, 3).toUpperCase()} ${m[1].slice(2)}` : '—';
 }
 
+// PH dan Net DG adalah KPI inverse: kenaikan berarti memburuk (merah),
+// penurunan berarti membaik (hijau).
+function deltaKinerjaCls(nilai) {
+    return deltaCls(nilai, true);
+}
+
+function deltaKinerjaGelapCls(nilai) {
+    if (nilai === null || nilai === undefined || Number.isNaN(Number(nilai)) || Number(nilai) === 0) {
+        return 'text-white/70';
+    }
+
+    return Number(nilai) < 0 ? 'text-emerald-200' : 'text-rose-200';
+}
+
 function chartUntuk(key) {
     return chart.value?.seri?.[key] ?? null;
+}
+
+function hitungYoyPersen(sekarang, tahunLalu) {
+    if (
+        sekarang === null || sekarang === undefined
+        || tahunLalu === null || tahunLalu === undefined
+        || Number.isNaN(Number(sekarang)) || Number.isNaN(Number(tahunLalu))
+        || Number(tahunLalu) === 0
+    ) {
+        return null;
+    }
+
+    return ((Number(sekarang) - Number(tahunLalu)) / Math.abs(Number(tahunLalu))) * 100;
+}
+
+function metrikYoyChart(key) {
+    const seri = chartUntuk(key);
+    const labels = seri?.label ?? [];
+    const akumulasiIni = seri?.tahun_ini?.akumulasi ?? [];
+    const akumulasiLalu = seri?.tahun_lalu?.akumulasi ?? [];
+    const bulananIni = seri?.tahun_ini?.bulanan ?? [];
+    const bulananLalu = seri?.tahun_lalu?.bulanan ?? [];
+
+    return labels.map((label, index) => ({
+        label,
+        yoyAkum: hitungYoyPersen(akumulasiIni[index], akumulasiLalu[index]),
+        yoyDelta: hitungYoyPersen(bulananIni[index], bulananLalu[index]),
+    }));
+}
+
+function gridMetrikYoy(key) {
+    return {
+        gridTemplateColumns: `repeat(${Math.max(1, metrikYoyChart(key).length)}, minmax(92px, 1fr))`,
+    };
+}
+
+function judulChart(card) {
+    const jenis = mode.value === 'ph' ? 'PH' : 'NET DG';
+    return card.key === 'total' ? `TOTAL ${jenis}` : `${jenis} ${card.judul}`;
 }
 
 async function muatOpsi() {
@@ -161,7 +214,7 @@ async function muatChart() {
 
 async function muatTabel() {
     if (!scopeAkses.bolehLihatRanking.value) {
-        branch.value = { grouping: 'cabang', baris: [], periode_lalu: null, desember_lalu: null, periode: null };
+        branch.value = { grouping: 'cabang', baris: [], bulan_sebelumnya: null, periode_lalu: null, desember_lalu: null, periode: null };
         return;
     }
 
@@ -390,26 +443,61 @@ onMounted(async () => {
                                 </div>
                                 <div class="rounded-2xl bg-white/10 px-5 py-4 text-right backdrop-blur">
                                     <p class="text-[10px] font-bold uppercase tracking-widest text-white/70">MTD</p>
-                                    <p class="mt-1 text-3xl font-extrabold" :class="deltaCls(card.delta?.mom?.nilai)">{{ formatDelta(card.delta?.mom?.nilai) }}</p>
-                                    <p class="text-sm" :class="deltaCls(card.delta?.mom?.nilai)">{{ formatDeltaPct(card.delta?.mom?.persen) }}</p>
+                                    <p class="mt-1 text-3xl font-extrabold" :class="deltaKinerjaCls(card.delta?.mom?.nilai)">{{ formatDelta(card.delta?.mom?.nilai) }}</p>
+                                    <p class="text-sm" :class="deltaKinerjaCls(card.delta?.mom?.nilai)">{{ formatDeltaPct(card.delta?.mom?.persen) }}</p>
                                 </div>
                                 <div class="rounded-2xl bg-white/10 px-5 py-4 text-right backdrop-blur">
                                     <p class="text-[10px] font-bold uppercase tracking-widest text-white/70">YOY</p>
-                                    <p class="mt-1 text-3xl font-extrabold" :class="deltaCls(card.delta?.yoy?.nilai)">{{ formatDelta(card.delta?.yoy?.nilai) }}</p>
-                                    <p class="text-sm" :class="deltaCls(card.delta?.yoy?.nilai)">{{ formatDeltaPct(card.delta?.yoy?.persen) }}</p>
+                                    <p class="mt-1 text-3xl font-extrabold" :class="deltaKinerjaCls(card.delta?.yoy?.nilai)">{{ formatDelta(card.delta?.yoy?.nilai) }}</p>
+                                    <p class="text-sm" :class="deltaKinerjaCls(card.delta?.yoy?.nilai)">{{ formatDeltaPct(card.delta?.yoy?.persen) }}</p>
                                 </div>
                             </div>
                         </div>
 
-                        <div class="rounded-[22px] bg-white p-4 shadow-sm ring-1 ring-black/5">
-                            <div class="mb-3 flex items-center justify-between gap-3">
-                                <div>
-                                    <p class="text-sm font-bold uppercase tracking-wide text-slate-700">{{ mode === 'ph' ? 'Total ' : '' }}{{ card.judul }}</p>
-                                    <p class="mt-1 text-xs text-slate-400">Perbandingan {{ chartUntuk(String(card.key).toLowerCase())?.tahun_lalu?.tahun }} vs {{ chartUntuk(String(card.key).toLowerCase())?.tahun_ini?.tahun }}</p>
+                        <div class="overflow-hidden rounded-[22px] bg-white shadow-sm ring-1 ring-black/5">
+                            <div class="flex items-center justify-between gap-3 px-5 pb-3 pt-4">
+                                <p class="text-sm font-bold uppercase tracking-wide text-slate-700">{{ judulChart(card) }}</p>
+                                <div class="text-xs text-slate-400">
+                                    {{ chartUntuk(String(card.key).toLowerCase())?.tahun_lalu?.tahun }} vs {{ chartUntuk(String(card.key).toLowerCase())?.tahun_ini?.tahun }}
                                 </div>
-                                <div class="text-xs text-slate-400">Periode {{ bulanTahunPanjang(snapshot?.periode) }}</div>
                             </div>
-                            <div class="h-[360px]">
+
+                            <div
+                                v-if="chartUntuk(String(card.key).toLowerCase()) && metrikYoyChart(String(card.key).toLowerCase()).length"
+                                class="overflow-x-auto px-4 pb-2"
+                            >
+                                <div class="min-w-[760px] space-y-px">
+                                    <div class="grid grid-cols-[64px_minmax(0,1fr)] items-stretch gap-0.5">
+                                        <div class="flex items-center text-[9px] font-black uppercase tracking-[0.08em] text-slate-400">YOY AKUM</div>
+                                        <div class="grid gap-px" :style="gridMetrikYoy(String(card.key).toLowerCase())">
+                                            <div
+                                                v-for="metric in metrikYoyChart(String(card.key).toLowerCase())"
+                                                :key="`yoy-akum-${card.key}-${metric.label}`"
+                                                class="rounded-[3px] bg-[#075bc5] px-2 py-1.5 text-center text-[9px] font-black tabular-nums"
+                                                :class="deltaKinerjaGelapCls(metric.yoyAkum)"
+                                            >
+                                                {{ formatDeltaPct(metric.yoyAkum) }}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="grid grid-cols-[64px_minmax(0,1fr)] items-stretch gap-0.5">
+                                        <div class="flex items-center text-[9px] font-black uppercase tracking-[0.08em] text-slate-400">YOY DELTA</div>
+                                        <div class="grid gap-px" :style="gridMetrikYoy(String(card.key).toLowerCase())">
+                                            <div
+                                                v-for="metric in metrikYoyChart(String(card.key).toLowerCase())"
+                                                :key="`yoy-delta-${card.key}-${metric.label}`"
+                                                class="rounded-[3px] border border-[#c7d9ef] bg-[#edf5ff] px-2 py-1.5 text-center text-[9px] font-black tabular-nums"
+                                                :class="deltaKinerjaCls(metric.yoyDelta)"
+                                            >
+                                                {{ formatDeltaPct(metric.yoyDelta) }}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="h-[265px] px-3 pb-3">
                                 <ComboChart
                                     v-if="chartUntuk(String(card.key).toLowerCase())"
                                     :labels="chartUntuk(String(card.key).toLowerCase())?.label ?? []"
@@ -463,8 +551,8 @@ onMounted(async () => {
                                         {{ bulanPendek(branch?.periode) }}
                                         <SortArrow :arah="sort.arahUntuk('nilai')" />
                                     </th>
-                                    <th class="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wider">MTD</th>
-                                    <th class="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wider">YOY</th>
+                                    <th class="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wider" :title="`Gap terhadap ${bulanPendek(branch?.bulan_sebelumnya)}`">MTD</th>
+                                    <th class="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wider" :title="`Gap terhadap ${bulanPendek(branch?.periode_lalu)}`">YOY</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -478,12 +566,12 @@ onMounted(async () => {
                                     <td class="px-4 py-3 text-right text-slate-500">{{ formatAngka(row.desember_lalu) }}</td>
                                     <td class="px-4 py-3 text-right font-bold text-slate-800">{{ formatAngka(row.nilai) }}</td>
                                     <td class="px-4 py-3 text-right">
-                                        <p class="font-semibold" :class="deltaCls(row.mtd?.nilai)">{{ formatDelta(row.mtd?.nilai) }}</p>
-                                        <p class="text-xs" :class="deltaCls(row.mtd?.nilai)">{{ formatDeltaPct(row.mtd?.persen) }}</p>
+                                        <p class="font-semibold" :class="deltaKinerjaCls(row.mtd?.nilai)">{{ formatDelta(row.mtd?.nilai) }}</p>
+                                        <p class="text-xs" :class="deltaKinerjaCls(row.mtd?.nilai)">{{ formatDeltaPct(row.mtd?.persen) }}</p>
                                     </td>
                                     <td class="px-4 py-3 text-right">
-                                        <p class="font-semibold" :class="deltaCls(row.yoy?.nilai)">{{ formatDelta(row.yoy?.nilai) }}</p>
-                                        <p class="text-xs" :class="deltaCls(row.yoy?.nilai)">{{ formatDeltaPct(row.yoy?.persen) }}</p>
+                                        <p class="font-semibold" :class="deltaKinerjaCls(row.yoy?.nilai)">{{ formatDelta(row.yoy?.nilai) }}</p>
+                                        <p class="text-xs" :class="deltaKinerjaCls(row.yoy?.nilai)">{{ formatDeltaPct(row.yoy?.persen) }}</p>
                                     </td>
                                 </tr>
                                 <tr v-if="!barisTerurut.length">

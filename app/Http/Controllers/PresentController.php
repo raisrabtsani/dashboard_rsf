@@ -23,6 +23,7 @@ class PresentController extends Controller
     {
         return Inertia::render('Present/Index', [
             'tanggalAwal' => $this->tanggal($request),
+            'tanggalTersedia' => $this->service->daftarTanggalTersedia(),
         ]);
     }
 

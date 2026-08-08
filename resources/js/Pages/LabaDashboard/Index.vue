@@ -14,7 +14,7 @@ import {
     fetchUker,
 } from '@/services/labaApi';
 import { formatAngka, formatDelta, formatDeltaPct, formatPct } from '@/utils/formatAngka';
-import { deltaCls, pctBadgeClsArah } from '@/utils/pencapaian';
+import { deltaCls, pctBadgeClsArah, pctClsArah } from '@/utils/pencapaian';
 import { useScope } from '@/utils/scope';
 import { useTableSort } from '@/utils/useTableSort';
 
@@ -174,6 +174,49 @@ function datasetMtd(section) {
             },
         ],
     };
+}
+
+function bulanLabel(bulan) {
+    return BULAN.find((item) => item.value === Number(bulan))?.label ?? bulan;
+}
+
+function bulanSingkat(bulan) {
+    return BULAN.find((item) => item.value === Number(bulan))?.singkat?.toUpperCase() ?? String(bulan).toUpperCase();
+}
+
+function validNumber(value) {
+    return value !== null && value !== undefined && !Number.isNaN(Number(value));
+}
+
+function monthlyMetrics(section) {
+    return titikTerbatas(section.chart).map((item) => {
+        const nilai = validNumber(item.nilai) ? Number(item.nilai) : null;
+        const target = validNumber(item.target) ? Number(item.target) : null;
+        const tahunLalu = validNumber(item.nilai_tahun_lalu) ? Number(item.nilai_tahun_lalu) : null;
+        const yoy = nilai !== null && tahunLalu !== null ? nilai - tahunLalu : null;
+
+        return {
+            bulan: item.bulan,
+            nama: item.nama,
+            pencapaian: nilai !== null && target !== null && target !== 0
+                ? (nilai / target) * 100
+                : null,
+            yoy,
+            yoyPersen: yoy !== null && tahunLalu !== 0
+                ? (yoy / Math.abs(tahunLalu)) * 100
+                : null,
+        };
+    });
+}
+
+function metricGridStyle(section) {
+    return {
+        gridTemplateColumns: `repeat(${Math.max(1, monthlyMetrics(section).length)}, minmax(92px, 1fr))`,
+    };
+}
+
+function deltaByKey(card, key) {
+    return deltaRows(card).find((item) => item.key === key) ?? { nilai: null, persen: null };
 }
 
 function punyaData(dataset) {
@@ -342,58 +385,107 @@ onMounted(async () => {
 
                 <!-- Total dan breakdown segmen -->
                 <section v-for="section in sections" :key="section.card.key" class="space-y-3">
-                    <div v-if="section.card.key !== 'total'" class="flex items-center gap-2 pt-1">
-                        <span class="h-2.5 w-2.5 rounded-full bg-[#0a62ca]" />
-                        <h2 class="text-xs font-black uppercase tracking-[0.16em] text-[#0755bd]">{{ section.card.judul }}</h2>
+                    <div class="flex items-center gap-3 pt-1">
+                        <span class="h-0.5 w-7 rounded-full bg-[#0a62ca]" />
+                        <h2 class="shrink-0 text-sm font-black uppercase tracking-[0.08em] text-[#0755bd]">{{ section.card.judul }}</h2>
+                        <span class="h-px flex-1 bg-[#b8cce8]" />
                     </div>
 
-                    <article class="relative overflow-hidden rounded-[18px] bg-gradient-to-r p-4 text-white shadow-[0_12px_28px_rgba(7,82,181,0.22)]" :class="heroTone(section.index)">
+                    <article class="relative overflow-hidden rounded-[18px] bg-gradient-to-r p-5 text-white shadow-[0_12px_28px_rgba(7,82,181,0.22)]" :class="heroTone(section.index)">
                         <LoadingOverlay :show="memuat.kartu" />
                         <span class="pointer-events-none absolute -right-12 -top-20 h-60 w-60 rounded-full bg-white/[0.08]" />
                         <span class="pointer-events-none absolute right-8 top-0 h-44 w-44 rounded-full border border-white/[0.08]" />
 
-                        <div class="relative grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_230px_minmax(320px,0.9fr)] lg:items-center">
+                        <div class="relative grid grid-cols-1 gap-5 xl:grid-cols-[minmax(260px,1.55fr)_190px_185px_150px_150px] xl:items-center">
                             <div>
-                                <p class="text-[10px] font-extrabold uppercase tracking-[0.16em] text-white/75">{{ section.card.judul }}</p>
-                                <p class="mt-1 text-4xl font-black leading-none tracking-tight tabular-nums">{{ formatAngka(section.card.nilai) }}</p>
+                                <p class="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/80">{{ section.card.key === 'total' ? 'Total' : section.card.judul }}</p>
+                                <p class="mt-1 text-5xl font-black leading-none tracking-tight tabular-nums">{{ formatAngka(section.card.nilai) }}</p>
                                 <p class="mt-2 text-xs font-bold text-white/80">Posisi {{ periodeLabel }}</p>
                             </div>
 
-                            <div class="rounded-2xl bg-white/10 px-4 py-3 text-right ring-1 ring-white/[0.12] backdrop-blur-sm">
-                                <p class="text-[9px] font-extrabold uppercase tracking-wide text-white/60">Target RKA</p>
-                                <p class="mt-1 text-2xl font-black tabular-nums">{{ formatAngka(section.card.target) }}</p>
-                                <span class="mt-2 inline-flex rounded-lg px-2.5 py-1 text-xs font-black tabular-nums" :class="pctBadgeClsArah(section.card.pencapaian, false)">
+                            <div class="text-center xl:text-right">
+                                <span class="inline-flex rounded-lg px-3 py-1.5 text-base font-black tabular-nums" :class="pctBadgeClsArah(section.card.pencapaian, false)">
                                     Penc {{ formatPct(section.card.pencapaian) }}
                                 </span>
-                                <p class="mt-2 text-xs font-bold text-white/85">Gap {{ formatDelta(section.card.gap) }}</p>
+                                <p class="mt-4 text-lg font-black tabular-nums" :class="deltaTone(section.card.gap)">{{ formatDelta(section.card.gap) }}</p>
                                 <p class="mt-0.5 text-[10px] font-black tabular-nums" :class="deltaTone(section.card.gap)">{{ formatDeltaPct(pctGap(section.card)) }}</p>
                             </div>
 
-                            <div class="grid grid-cols-3 divide-x divide-white/[0.12] border-l-0 border-white/10 lg:border-l lg:pl-5">
-                                <div v-for="delta in deltaRows(section.card)" :key="delta.key" class="px-3 text-center first:pl-0 last:pr-0">
-                                    <p class="text-[9px] font-extrabold uppercase tracking-[0.12em] text-white/55">{{ delta.label }}</p>
-                                    <p class="mt-1 text-lg font-black tabular-nums" :class="deltaTone(delta.nilai)">{{ formatDelta(delta.nilai) }}</p>
-                                    <p class="mt-0.5 text-[9px] font-black tabular-nums" :class="deltaTone(delta.nilai)">{{ formatDeltaPct(delta.persen) }}</p>
+                            <div class="grid grid-cols-2 divide-x divide-white/[0.18] xl:grid-cols-1 xl:divide-x-0 xl:divide-y">
+                                <div class="px-3 pb-2 text-center">
+                                    <p class="text-[9px] font-extrabold uppercase tracking-[0.12em] text-white/55">Target {{ bulanLabel(applied.bulan) }}</p>
+                                    <p class="mt-1 text-lg font-black tabular-nums">{{ formatAngka(section.card.target) }}</p>
                                 </div>
+                                <div class="px-3 pt-2 text-center">
+                                    <p class="text-[9px] font-extrabold uppercase tracking-[0.12em] text-white/55">Target {{ bulanLabel(section.card.target_berikutnya_bulan) }}</p>
+                                    <p class="mt-1 text-lg font-black tabular-nums">{{ formatAngka(section.card.target_berikutnya) }}</p>
+                                </div>
+                            </div>
+
+                            <div class="border-l-0 border-white/[0.16] text-center xl:border-l xl:pl-5">
+                                <p class="text-[9px] font-extrabold uppercase tracking-[0.12em] text-white/55">MTD</p>
+                                <p class="mt-1 text-2xl font-black tabular-nums" :class="deltaTone(deltaByKey(section.card, 'mtd').nilai)">{{ formatDelta(deltaByKey(section.card, 'mtd').nilai) }}</p>
+                                <p class="mt-1 text-[10px] font-black tabular-nums" :class="deltaTone(deltaByKey(section.card, 'mtd').nilai)">{{ formatDeltaPct(deltaByKey(section.card, 'mtd').persen) }}</p>
+                            </div>
+
+                            <div class="border-l-0 border-white/[0.16] text-center xl:border-l xl:pl-5">
+                                <p class="text-[9px] font-extrabold uppercase tracking-[0.12em] text-white/55">YOY</p>
+                                <p class="mt-1 text-2xl font-black tabular-nums" :class="deltaTone(deltaByKey(section.card, 'yoy').nilai)">{{ formatDelta(deltaByKey(section.card, 'yoy').nilai) }}</p>
+                                <p class="mt-1 text-[10px] font-black tabular-nums" :class="deltaTone(deltaByKey(section.card, 'yoy').nilai)">{{ formatDeltaPct(deltaByKey(section.card, 'yoy').persen) }}</p>
                             </div>
                         </div>
 
-                        <div class="relative mt-3 h-1 overflow-hidden rounded-full bg-blue-950/20">
+                        <div class="relative mt-4 h-1 overflow-hidden rounded-full bg-blue-950/20">
                             <div class="h-full rounded-full bg-cyan-300" :style="{ width: `${Math.min(100, Math.max(0, Number(section.card.pencapaian ?? 0)))}%` }" />
                         </div>
                     </article>
 
-                    <div class="grid grid-cols-1 gap-3 xl:grid-cols-2">
-                        <article class="relative rounded-[18px] border border-slate-200 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
+                    <div class="grid grid-cols-1 gap-3">
+                        <article class="relative overflow-hidden rounded-[18px] border border-slate-200 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
                             <LoadingOverlay :show="memuat.chart" />
-                            <div class="mb-2 flex items-center justify-between gap-3">
+
+                            <div class="mb-3 flex items-center justify-between gap-3">
                                 <div>
                                     <p class="text-[9px] font-extrabold uppercase tracking-[0.14em] text-slate-400">Actual vs Target</p>
-                                    <h3 class="text-xs font-black uppercase tracking-wide text-slate-700">{{ section.card.judul }}</h3>
+                                    <h3 class="text-xs font-black uppercase tracking-wide text-slate-500">{{ section.card.key === 'total' ? 'Total' : section.card.judul }}</h3>
                                 </div>
                                 <span class="rounded-full bg-blue-50 px-3 py-1 text-[10px] font-bold text-blue-700">{{ applied.tahun }}</span>
                             </div>
-                            <div class="h-[235px]">
+
+                            <div v-if="section.chart && monthlyMetrics(section).length" class="mb-3 overflow-x-auto pb-1">
+                                <div class="min-w-[760px] space-y-1">
+                                    <div class="grid grid-cols-[62px_minmax(0,1fr)] items-stretch gap-2">
+                                        <div class="flex items-center text-[9px] font-black uppercase tracking-[0.12em] text-slate-400">PENC</div>
+                                        <div class="grid gap-px" :style="metricGridStyle(section)">
+                                            <div
+                                                v-for="metric in monthlyMetrics(section)"
+                                                :key="`penc-${section.card.key}-${metric.bulan}`"
+                                                class="rounded-md border border-slate-200 bg-slate-50 px-2 py-2 text-center text-[10px] font-black tabular-nums"
+                                                :class="pctClsArah(metric.pencapaian, false)"
+                                            >
+                                                {{ formatPct(metric.pencapaian, 1) }}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="grid grid-cols-[62px_minmax(0,1fr)] items-stretch gap-2">
+                                        <div class="flex items-center text-[9px] font-black uppercase tracking-[0.12em] text-slate-400">YOY</div>
+                                        <div class="grid gap-px" :style="metricGridStyle(section)">
+                                            <div
+                                                v-for="metric in monthlyMetrics(section)"
+                                                :key="`yoy-${section.card.key}-${metric.bulan}`"
+                                                class="rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-center tabular-nums"
+                                                :class="deltaCls(metric.yoy)"
+                                            >
+                                                <span class="text-[10px] font-black">{{ formatDelta(metric.yoy) }}</span>
+                                                <span class="ml-1 text-[8px] font-bold">({{ formatDeltaPct(metric.yoyPersen) }})</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="h-[270px] min-w-0">
                                 <BarChart
                                     v-if="section.chart && punyaData(datasetActual(section))"
                                     :labels="datasetActual(section).labels"
@@ -401,20 +493,37 @@ onMounted(async () => {
                                     variant="laba"
                                     :show-value-labels="true"
                                 />
-                                <p v-else class="pt-20 text-center text-xs text-slate-400">Tidak ada data.</p>
+                                <p v-else class="pt-24 text-center text-xs text-slate-400">Tidak ada data.</p>
                             </div>
                         </article>
 
-                        <article class="relative rounded-[18px] border border-slate-200 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
+                        <article class="relative overflow-hidden rounded-[18px] border border-slate-200 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
                             <LoadingOverlay :show="memuat.chart" />
-                            <div class="mb-2 flex items-center justify-between gap-3">
+
+                            <div class="mb-3 flex items-center justify-between gap-3">
                                 <div>
                                     <p class="text-[9px] font-extrabold uppercase tracking-[0.14em] text-slate-400">Perbandingan MTD</p>
-                                    <h3 class="text-xs font-black uppercase tracking-wide text-slate-700">Delta MTD {{ section.card.judul }}</h3>
+                                    <h3 class="text-xs font-black uppercase tracking-wide text-slate-500">Delta MTD {{ section.card.key === 'total' ? 'Total Laba' : section.card.judul }}</h3>
                                 </div>
                                 <span class="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-bold text-slate-600">{{ applied.tahun - 1 }} / {{ applied.tahun }}</span>
                             </div>
-                            <div class="h-[235px]">
+
+                            <div v-if="monthlyMetrics(section).length" class="mb-3 grid grid-cols-[62px_minmax(0,1fr)] items-stretch gap-2">
+                                <div class="flex items-center text-[9px] font-black uppercase tracking-[0.12em] text-slate-400">YOY</div>
+                                <div class="grid gap-px" :style="metricGridStyle(section)">
+                                    <div
+                                        v-for="metric in monthlyMetrics(section)"
+                                        :key="`mtd-yoy-${section.card.key}-${metric.bulan}`"
+                                        class="rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-center tabular-nums"
+                                        :class="deltaCls(metric.yoy)"
+                                    >
+                                        <span class="text-[10px] font-black">{{ formatDelta(metric.yoy) }}</span>
+                                        <span class="ml-1 text-[8px] font-bold">({{ formatDeltaPct(metric.yoyPersen) }})</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="h-[360px] min-w-0">
                                 <BarChart
                                     v-if="section.chart && punyaData(datasetMtd(section))"
                                     :labels="datasetMtd(section).labels"
@@ -422,7 +531,7 @@ onMounted(async () => {
                                     variant="laba"
                                     :show-value-labels="true"
                                 />
-                                <p v-else class="pt-20 text-center text-xs text-slate-400">Tidak ada data.</p>
+                                <p v-else class="pt-28 text-center text-xs text-slate-400">Tidak ada data.</p>
                             </div>
                         </article>
                     </div>
@@ -453,12 +562,13 @@ onMounted(async () => {
                                 <tr>
                                     <th class="w-12 px-3 py-2.5 text-center font-black">#</th>
                                     <th class="min-w-[270px] cursor-pointer px-3 py-2.5 text-left font-black uppercase tracking-wide" @click="sort.urutkanKolom('nama')">Nama {{ branch.grouping === 'uker' ? 'Unit Kerja' : 'Cabang' }} <SortArrow :arah="sort.arahUntuk('nama')" /></th>
-                                    <th class="min-w-[130px] cursor-pointer px-3 py-2.5 text-right font-black uppercase tracking-wide" @click="sort.urutkanKolom('nilai')">Actual <SortArrow :arah="sort.arahUntuk('nilai')" /></th>
-                                    <th class="min-w-[130px] cursor-pointer px-3 py-2.5 text-right font-black uppercase tracking-wide" @click="sort.urutkanKolom('target')">Target <SortArrow :arah="sort.arahUntuk('target')" /></th>
-                                    <th class="min-w-[105px] cursor-pointer px-3 py-2.5 text-right font-black uppercase tracking-wide" @click="sort.urutkanKolom('pencapaian')">Penc <SortArrow :arah="sort.arahUntuk('pencapaian')" /></th>
-                                    <th class="min-w-[125px] cursor-pointer px-3 py-2.5 text-right font-black uppercase tracking-wide" @click="sort.urutkanKolom('gap')">Gap <SortArrow :arah="sort.arahUntuk('gap')" /></th>
+                                    <th class="min-w-[130px] cursor-pointer px-3 py-2.5 text-right font-black uppercase tracking-wide" @click="sort.urutkanKolom('posisi_bulan_lalu')">{{ bulanSingkat(applied.bulan) }} {{ applied.tahun - 1 }} <SortArrow :arah="sort.arahUntuk('posisi_bulan_lalu')" /></th>
+                                    <th class="min-w-[130px] cursor-pointer px-3 py-2.5 text-right font-black uppercase tracking-wide" @click="sort.urutkanKolom('posisi_desember_lalu')">DES {{ applied.tahun - 1 }} <SortArrow :arah="sort.arahUntuk('posisi_desember_lalu')" /></th>
+                                    <th class="min-w-[130px] cursor-pointer px-3 py-2.5 text-right font-black uppercase tracking-wide" @click="sort.urutkanKolom('nilai')">{{ bulanSingkat(applied.bulan) }} {{ applied.tahun }} <SortArrow :arah="sort.arahUntuk('nilai')" /></th>
+                                    <th class="min-w-[130px] cursor-pointer px-3 py-2.5 text-right font-black uppercase tracking-wide" @click="sort.urutkanKolom('target')">RKA <SortArrow :arah="sort.arahUntuk('target')" /></th>
+                                    <th class="min-w-[105px] cursor-pointer px-3 py-2.5 text-right font-black uppercase tracking-wide" @click="sort.urutkanKolom('pencapaian')">PENC % <SortArrow :arah="sort.arahUntuk('pencapaian')" /></th>
+                                    <th class="min-w-[125px] cursor-pointer px-3 py-2.5 text-right font-black uppercase tracking-wide" @click="sort.urutkanKolom('gap')">GAP <SortArrow :arah="sort.arahUntuk('gap')" /></th>
                                     <th class="min-w-[120px] cursor-pointer px-3 py-2.5 text-right font-black uppercase tracking-wide" @click="sort.urutkanKolom('mtd')">MTD <SortArrow :arah="sort.arahUntuk('mtd')" /></th>
-                                    <th class="min-w-[120px] cursor-pointer px-3 py-2.5 text-right font-black uppercase tracking-wide" @click="sort.urutkanKolom('ytd')">YTD <SortArrow :arah="sort.arahUntuk('ytd')" /></th>
                                     <th class="min-w-[120px] cursor-pointer px-3 py-2.5 text-right font-black uppercase tracking-wide" @click="sort.urutkanKolom('yoy')">YOY <SortArrow :arah="sort.arahUntuk('yoy')" /></th>
                                 </tr>
                             </thead>
@@ -469,16 +579,17 @@ onMounted(async () => {
                                         <p class="font-extrabold text-slate-700">{{ row.nama }}</p>
                                         <p class="mt-0.5 text-[9px] font-semibold text-blue-500">Area Head: {{ row.area_nama ?? '–' }}</p>
                                     </td>
+                                    <td class="px-3 py-2.5 text-right font-semibold tabular-nums text-slate-500">{{ formatAngka(row.posisi_bulan_lalu) }}</td>
+                                    <td class="px-3 py-2.5 text-right font-semibold tabular-nums text-slate-500">{{ formatAngka(row.posisi_desember_lalu) }}</td>
                                     <td class="px-3 py-2.5 text-right font-black tabular-nums text-slate-800">{{ formatAngka(row.nilai) }}</td>
                                     <td class="px-3 py-2.5 text-right font-semibold tabular-nums text-slate-500">{{ formatAngka(row.target) }}</td>
                                     <td class="px-3 py-2.5 text-right"><span class="rounded-lg px-2 py-1 font-black tabular-nums" :class="pctBadgeClsArah(row.pencapaian, false)">{{ formatPct(row.pencapaian) }}</span></td>
                                     <td class="px-3 py-2.5 text-right font-black tabular-nums" :class="deltaCls(row.gap)">{{ formatDelta(row.gap) }}</td>
                                     <td class="px-3 py-2.5 text-right font-black tabular-nums" :class="deltaCls(row.mtd)">{{ formatDelta(row.mtd) }}</td>
-                                    <td class="px-3 py-2.5 text-right font-black tabular-nums" :class="deltaCls(row.ytd)">{{ formatDelta(row.ytd) }}</td>
                                     <td class="px-3 py-2.5 text-right font-black tabular-nums" :class="deltaCls(row.yoy)">{{ formatDelta(row.yoy) }}</td>
                                 </tr>
                                 <tr v-if="!barisTerurut.length">
-                                    <td colspan="9" class="px-4 py-10 text-center text-slate-400">Tidak ada data pada periode ini.</td>
+                                    <td colspan="10" class="px-4 py-10 text-center text-slate-400">Tidak ada data pada periode ini.</td>
                                 </tr>
                             </tbody>
                         </table>

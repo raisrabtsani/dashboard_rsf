@@ -16,6 +16,6 @@ defineProps({
         key-nilai="total"
         label-nilai="Total PH"
         massal="tahun"
-        catatan-duplikat="Periode yang datanya sudah ada akan DILEWATI, bukan membatalkan seluruh berkas — jadi berkas kumulatif sepanjang tahun tetap bisa diunggah berulang. Untuk menimpa periode lama, pakai `php artisan import:ph`."
+        catatan-duplikat="Saldo otomatis di-SUMIF berdasarkan id_uker + periode yang sama. id_cabang mengikuti master id_uker agar semua baris masuk ke grup yang benar; rincian segmen tetap dipertahankan. Periode lama tetap mengikuti aturan upload yang berlaku."
     />
 </template>
