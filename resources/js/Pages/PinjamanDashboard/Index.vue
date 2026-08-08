@@ -54,7 +54,7 @@ const KUALITAS = [
 ];
 
 const DELTA_FALLBACK = [
-    { key: 'dtd', label: 'DTD' },
+    { key: 'dtd', label: 'D-1' },
     { key: 'mtd', label: 'MTD' },
     { key: 'ytd', label: 'YTD' },
     { key: 'yoy', label: 'YOY' },
@@ -108,6 +108,19 @@ const pencapaianProgress = (q) => {
     const nilai = Number(heroKartu(q)?.pencapaian ?? 0);
     return Math.min(100, Math.max(0, Number.isFinite(nilai) ? nilai : 0));
 };
+
+function heroDeltaCls(nilai, inverse = false) {
+    if (nilai === null || nilai === undefined || Number.isNaN(Number(nilai)) || Number(nilai) === 0) {
+        return 'text-white/75';
+    }
+
+    const naik = Number(nilai) > 0;
+    const baik = inverse ? !naik : naik;
+
+    return baik
+        ? 'text-emerald-300'
+        : 'text-rose-300';
+}
 
 const segmenList = computed(() => {
     const total = (snap.total?.kartu ?? []).filter((k) => k.key !== 'total');
@@ -308,6 +321,8 @@ const branch = computed(() => {
 
     return {
         tanggal: branchData.total?.tanggal,
+        tanggal_referensi: branchData.total?.tanggal_referensi ?? {},
+        label_delta: branchData.total?.label_delta ?? DELTA_FALLBACK,
         grouping: branchData.total?.grouping ?? 'cabang',
         baris: totalRows.map((total) => {
             const quality = qualityMap.get(String(total.id));
@@ -324,6 +339,10 @@ const branch = computed(() => {
                 target,
                 pencapaian: target > 0 ? (nilai / target) * 100 : null,
                 gap: nilai !== null && target !== null ? nilai - target : null,
+                dtd: rasioDeltaCabang(total, quality, 'dtd'),
+                mtd: rasioDeltaCabang(total, quality, 'mtd'),
+                ytd: rasioDeltaCabang(total, quality, 'ytd'),
+                yoy: rasioDeltaCabang(total, quality, 'yoy'),
                 ratio: true,
             };
         }),
@@ -369,11 +388,66 @@ function persenDeltaCabang(baris, key) {
     return data && typeof data === 'object' ? data.persen ?? null : null;
 }
 
+function rasioDeltaCabang(total, quality, key) {
+    const totalSekarang = Number(total?.nilai ?? 0);
+    const kualitasSekarang = Number(quality?.nilai ?? 0);
+    const deltaTotal = nilaiDeltaCabang(total, key);
+    const deltaKualitas = quality ? nilaiDeltaCabang(quality, key) : 0;
+
+    if (deltaTotal === null || deltaTotal === undefined || deltaKualitas === null || deltaKualitas === undefined) {
+        return { nilai: null, persen: null };
+    }
+
+    const totalPembanding = totalSekarang - Number(deltaTotal);
+    const kualitasPembanding = kualitasSekarang - Number(deltaKualitas);
+    const rasioSekarang = totalSekarang !== 0 ? (kualitasSekarang / totalSekarang) * 100 : null;
+    const rasioPembanding = totalPembanding !== 0 ? (kualitasPembanding / totalPembanding) * 100 : null;
+
+    if (rasioSekarang === null || rasioPembanding === null) {
+        return { nilai: null, persen: null };
+    }
+
+    const selisih = rasioSekarang - rasioPembanding;
+
+    return {
+        nilai: selisih,
+        persen: rasioPembanding !== 0 ? (selisih / Math.abs(rasioPembanding)) * 100 : null,
+    };
+}
+
+const cabangDeltaColumns = computed(() => branch.value?.label_delta ?? DELTA_FALLBACK);
+
+function simbolDelta(nilai) {
+    if (nilai === null || nilai === undefined || Number.isNaN(Number(nilai))) return '';
+    if (Number(nilai) > 0) return '▲';
+    if (Number(nilai) < 0) return '▼';
+    return '•';
+}
+
+function teksPersenDeltaCabang(baris, key) {
+    const persen = persenDeltaCabang(baris, key);
+    return persen === null || persen === undefined
+        ? '–'
+        : `${simbolDelta(persen)} ${formatDeltaPct(persen)}`;
+}
+
 const BULAN_ID = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 function tanggalPanjang(iso) {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso ?? '');
     const hari = m ? String(Number(m[3])).padStart(2, '0') : '';
     return m ? `${hari} ${BULAN_ID[Number(m[2]) - 1]} ${m[1]}` : iso;
+}
+
+function tanggalTanpaNol(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso ?? '');
+    return m ? `${Number(m[3])} ${BULAN_ID[Number(m[2]) - 1]} ${m[1]}` : iso;
+}
+
+function judulDeltaCabang(delta) {
+    const referensi = branch.value?.tanggal_referensi?.[delta.key];
+    if (!branch.value?.tanggal || !referensi) return delta.label;
+
+    return `${delta.label}: ${tanggalTanpaNol(branch.value.tanggal)} - ${tanggalTanpaNol(referensi)}`;
 }
 
 function namaPilihan(list, id, fallback) {
@@ -667,6 +741,12 @@ onMounted(async () => {
                                 >
                                     Penc {{ formatPct(heroKartu(q.key)?.pencapaian) }}
                                 </span>
+                                <p
+                                    class="mt-1.5 text-[9px] font-extrabold tabular-nums"
+                                    :class="heroDeltaCls(heroKartu(q.key)?.gap, q.inverse)"
+                                >
+                                    Gap {{ formatDelta(heroKartu(q.key)?.gap) }}
+                                </p>
                             </div>
                         </div>
 
@@ -679,8 +759,8 @@ onMounted(async () => {
                                 <p class="text-[8px] font-bold uppercase tracking-wider text-white/55">{{ d.label }}</p>
                                 <p class="mt-1 text-[11px] font-extrabold tabular-nums">{{ formatDelta(d.nilai) }}</p>
                                 <p
-                                    class="mt-0.5 text-[8px] font-semibold tabular-nums"
-                                    :class="deltaCls(d.nilai, q.inverse).replace('text-', 'text-')"
+                                    class="mt-0.5 text-[9px] font-black tabular-nums"
+                                    :class="heroDeltaCls(d.nilai, q.inverse)"
                                 >
                                     {{ formatDeltaPct(d.persen) }}
                                 </p>
@@ -922,7 +1002,7 @@ onMounted(async () => {
                         </h3>
                         <p class="mt-0.5 text-[9px] text-slate-400">Posisi {{ tanggalPanjang(branch?.tanggal) }}</p>
                     </div>
-                    <div class="flex flex-wrap items-end gap-2">
+                    <div class="flex flex-wrap items-end gap-2.5">
                         <label class="block">
                             <span class="mini-filter-label">Area Head</span>
                             <select
@@ -945,11 +1025,11 @@ onMounted(async () => {
                         </label>
                         <button
                             type="button"
-                            class="inline-flex h-8 items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-[8px] font-bold text-slate-500 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            class="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-xs font-bold text-slate-600 shadow-sm transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                             :disabled="rankingFilterKosong"
                             @click="resetRankingFilter"
                         >
-                            <svg class="h-3 w-3" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                                 <path d="M4 5v4h4M16 15v-4h-4" />
                                 <path d="M5.6 14.4A7 7 0 0115 5.7M14.4 5.6A7 7 0 015 14.3" />
                             </svg>
@@ -984,7 +1064,12 @@ onMounted(async () => {
                                 >
                                     {{ k.label }} <SortArrow :arah="sort.arahUntuk(k.key)" />
                                 </th>
-                                <th v-for="d in DELTA_FALLBACK" :key="d.key" class="border-t-2 border-fuchsia-300 px-3 py-2 text-right font-semibold">
+                                <th
+                                    v-for="d in cabangDeltaColumns"
+                                    :key="d.key"
+                                    class="border-t-2 border-fuchsia-300 px-3 py-2 text-right font-semibold"
+                                    :title="judulDeltaCabang(d)"
+                                >
                                     {{ d.label }}
                                 </th>
                             </tr>
@@ -1006,12 +1091,12 @@ onMounted(async () => {
                                 <td class="px-3 py-2 text-right font-bold tabular-nums" :class="deltaCls(b.gap, cabangInverse)">
                                     {{ formatBranchGap(b.gap) }}
                                 </td>
-                                <td v-for="d in DELTA_FALLBACK" :key="d.key" class="px-3 py-2 text-right tabular-nums">
+                                <td v-for="d in cabangDeltaColumns" :key="d.key" class="px-3 py-2 text-right tabular-nums">
                                     <span class="block font-bold" :class="deltaCls(nilaiDeltaCabang(b, d.key), cabangInverse)">
                                         {{ branchRatio ? formatDeltaPct(nilaiDeltaCabang(b, d.key)) : formatDelta(nilaiDeltaCabang(b, d.key)) }}
                                     </span>
-                                    <span class="block text-[8px]" :class="deltaCls(nilaiDeltaCabang(b, d.key), cabangInverse)">
-                                        {{ formatDeltaPct(persenDeltaCabang(b, d.key)) }}
+                                    <span class="block text-[8px] font-semibold" :class="deltaCls(nilaiDeltaCabang(b, d.key), cabangInverse)">
+                                        {{ teksPersenDeltaCabang(b, d.key) }}
                                     </span>
                                 </td>
                             </tr>
@@ -1050,13 +1135,13 @@ onMounted(async () => {
 .filter-label,
 .mini-filter-label {
     display: block;
-    margin-bottom: 0.25rem;
-    font-size: 0.56rem;
-    line-height: 0.8rem;
-    font-weight: 700;
+    margin-bottom: 0.3rem;
+    font-size: 0.68rem;
+    line-height: 0.9rem;
+    font-weight: 800;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: #94a3b8;
+    letter-spacing: 0.075em;
+    color: #64748b;
 }
 
 .filter-control {
@@ -1083,15 +1168,23 @@ onMounted(async () => {
 
 .mini-filter-control {
     display: block;
-    width: 9.25rem;
-    height: 2rem;
-    border-radius: 0.45rem;
-    border-color: #e2e8f0;
+    width: 10.75rem;
+    height: 2.5rem;
+    border-radius: 0.75rem;
+    border-color: #cbd5e1;
     background-color: #ffffff;
-    padding-left: 0.55rem;
-    padding-right: 1.6rem;
-    font-size: 0.6rem;
-    color: #475569;
+    padding-left: 0.8rem;
+    padding-right: 2rem;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    font-weight: 700;
+    color: #1e293b;
+    box-shadow: 0 1px 3px rgb(15 23 42 / 0.08);
+    transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.mini-filter-control:hover {
+    border-color: #94a3b8;
 }
 
 .table-head {
@@ -1111,7 +1204,7 @@ onMounted(async () => {
     }
 
     .mini-filter-control {
-        width: 8.25rem;
+        width: 9.75rem;
     }
 }
 </style>

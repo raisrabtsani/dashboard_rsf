@@ -12,6 +12,7 @@ const props = defineProps({
     judul: { type: String, required: true },
     kolomBerkas: { type: Array, required: true },
     labelKelompok: { type: String, default: 'Produk' },
+    petunjukKpi: { type: String, default: '' },
 });
 
 const api = buatAdminApi(props.domain);
@@ -201,6 +202,9 @@ onMounted(muat);
                                 <h3 class="mt-1 text-xl font-bold">Unggah Target</h3>
                                 <p class="mt-1 max-w-3xl text-xs leading-relaxed text-white/75">
                                     Kolom: {{ kolomBerkas.join(' | ') }}. Bulan boleh angka 1–12 atau nama bulan.
+                                </p>
+                                <p v-if="petunjukKpi" class="mt-1 max-w-4xl text-xs font-semibold leading-relaxed text-cyan-100">
+                                    Pemetaan KPI: {{ petunjukKpi }}
                                 </p>
                             </div>
                             <div class="flex flex-wrap items-center gap-3">

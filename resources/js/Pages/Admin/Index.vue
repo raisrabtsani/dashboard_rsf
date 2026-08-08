@@ -64,14 +64,14 @@ const DOMAIN_MENU = [
         ],
     },
     {
-        title: 'Recovery EC & NET DG',
-        description: 'Kelola data recovery, target, dan flow hapus buku.',
+        title: 'Recovery EC - PH & Net DG',
+        description: 'Kelola data Recovery EC, RKA Recovery, dan data PH untuk perhitungan Net DG.',
         accent: 'amber',
         icon: 'recovery',
         options: [
             { label: 'Upload Recovery EC', route: 'admin.upload.recovery.index', type: 'upload' },
             { label: 'RKA Recovery', route: 'admin.rka.recovery.index', type: 'rka' },
-            { label: 'Upload NET DG', route: 'admin.upload.ph.index', type: 'upload' },
+            { label: 'Upload PH & Net DG', route: 'admin.upload.ph.index', type: 'upload' },
         ],
     },
     {

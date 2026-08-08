@@ -7,7 +7,7 @@ import PresentDetailTable from '@/Components/PresentDetailTable.vue';
 import { Head } from '@inertiajs/vue3';
 import { computed, onMounted, ref } from 'vue';
 import { fetchArea, fetchDetail, fetchOverview } from '@/services/presentApi';
-import { formatAngka, formatDelta, formatPct } from '@/utils/formatAngka';
+import { formatAngka, formatDelta, formatDeltaPct, formatPct } from '@/utils/formatAngka';
 
 const props = defineProps({
     tanggalAwal: { type: String, required: true },
@@ -49,6 +49,31 @@ function formatTanggalOpsi(value) {
 
 const inverse = (key) => ['sml', 'npl'].includes(key);
 const cardByKey = (key) => kartuRegion.value.find((item) => item.key === key) ?? null;
+
+const RASIO_DELTA = [
+    { key: 'mtd', label: 'MTD' },
+    { key: 'ytd', label: 'YTD' },
+    { key: 'yoy', label: 'YOY' },
+];
+
+function ratioTone(item, value) {
+    if (value === null || value === undefined || Number(value) === 0) return 'text-white/75';
+    const baik = item?.inverse ? Number(value) < 0 : Number(value) > 0;
+    return baik ? 'text-emerald-300' : 'text-rose-300';
+}
+
+function ratioArrow(value) {
+    if (value === null || value === undefined) return '';
+    if (Number(value) === 0) return '•';
+    return Number(value) > 0 ? '▲' : '▼';
+}
+
+function ratioPencClass(value) {
+    if (value === null || value === undefined) return 'bg-white/10 text-white/70';
+    return Number(value) >= 100
+        ? 'bg-emerald-50 text-emerald-700'
+        : 'bg-rose-50 text-rose-700';
+}
 
 const dpkCard = computed(() => cardByKey('dpk'));
 const dpkProduk = computed(() => {
@@ -211,18 +236,47 @@ onMounted(muat);
                         <div
                             v-for="r in rasio"
                             :key="r.key"
-                            class="relative overflow-hidden rounded-[16px] bg-gradient-to-r from-[#0a56be] to-[#0a6bd5] px-4 py-3 text-white shadow-[0_10px_24px_rgba(11,93,196,0.22)]"
+                            class="relative overflow-hidden rounded-[16px] px-4 py-3 text-white shadow-[0_10px_24px_rgba(11,93,196,0.22)]"
+                            :style="{
+                                background: r.key === 'ldr'
+                                    ? 'linear-gradient(100deg, #08479f 0%, #063574 48%, #06275a 100%)'
+                                    : 'linear-gradient(100deg, #245bdc 0%, #1e5bd6 52%, #075bbf 100%)',
+                            }"
                         >
                             <span class="pointer-events-none absolute -right-5 -top-10 h-28 w-28 rounded-full bg-white/10" />
-                            <div class="relative flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
-                                <div>
-                                    <p class="text-[10px] font-bold uppercase tracking-[0.16em] text-white/70">{{ r.judul }}</p>
+
+                            <div class="relative grid grid-cols-1 gap-4 sm:grid-cols-2 sm:items-center">
+                                <div class="min-w-0">
+                                    <p class="text-[11px] font-black uppercase tracking-wide text-white">{{ r.judul }}</p>
                                     <p class="mt-1 text-[2.15rem] font-black leading-none tabular-nums">{{ formatPct(r.nilai) }}</p>
-                                    <p class="mt-2 text-xs font-medium text-white/75">{{ r.deskripsi }}</p>
+
+                                    <div class="mt-1 flex flex-wrap items-center gap-1.5">
+                                        <span class="text-sm font-black tabular-nums text-white">RKA {{ formatPct(r.target) }}</span>
+                                        <span class="rounded-md px-1.5 py-0.5 text-[10px] font-black tabular-nums" :class="ratioPencClass(r.pencapaian)">
+                                            Penc {{ formatPct(r.pencapaian, 1) }}
+                                        </span>
+                                    </div>
+
+                                    <p class="mt-1 text-sm font-black text-white">
+                                        Gap RKA
+                                        <span class="tabular-nums" :class="ratioTone(r, r.gap)">{{ formatDeltaPct(r.gap) }}</span>
+                                    </p>
                                 </div>
-                                <div class="rounded-xl bg-white/12 px-3 py-2 text-left ring-1 ring-white/15 sm:text-right">
-                                    <p class="text-[10px] font-semibold uppercase text-white/60">Komposisi</p>
-                                    <p class="mt-1 text-sm font-black tabular-nums">{{ formatAngka(r.pembilang) }} / {{ formatAngka(r.penyebut) }}</p>
+
+                                <div class="grid grid-cols-3 divide-x divide-white/[0.12]">
+                                    <div
+                                        v-for="delta in RASIO_DELTA"
+                                        :key="`${r.key}-${delta.key}`"
+                                        class="px-3 text-center first:pl-0 last:pr-0"
+                                    >
+                                        <p class="text-[8px] font-black uppercase tracking-wider text-white/75">{{ delta.label }}</p>
+                                        <p
+                                            class="mt-2 whitespace-nowrap text-xl font-black leading-none tabular-nums"
+                                            :class="ratioTone(r, r.delta?.[delta.key]?.nilai)"
+                                        >
+                                            <span>{{ ratioArrow(r.delta?.[delta.key]?.nilai) }} </span>{{ formatDeltaPct(r.delta?.[delta.key]?.nilai) }}
+                                        </p>
+                                    </div>
                                 </div>
                             </div>
                         </div>

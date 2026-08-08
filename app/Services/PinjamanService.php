@@ -381,23 +381,64 @@ class PinjamanService
             ->selectRaw("{$kolom} as entitas_id, SUM(target) as total")
             ->pluck('total', 'entitas_id');
 
+        // Referensi tabel ranking selalu memakai empat pembanding yang sama:
+        // D-1, akhir bulan sebelumnya, akhir tahun sebelumnya, dan tanggal yang
+        // sama pada tahun sebelumnya. Berlaku juga untuk tab SML/NPL agar tabel
+        // tidak kosong dan konsisten dengan kebutuhan monitoring cabang.
+        $referensi = [
+            'dtd' => $this->tanggalTersedia($posisi->copy()->subDay(), $tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi),
+            'mtd' => $this->tanggalTersedia($posisi->copy()->subMonthNoOverflow()->endOfMonth(), $tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi),
+            'ytd' => $this->tanggalTersedia($posisi->copy()->subYear()->endOfYear(), $tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi),
+            'yoy' => $this->tanggalTersedia($posisi->copy()->subYear(), $tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi),
+        ];
+
+        $pembanding = collect($referensi)->mapWithKeys(function (?string $tanggalReferensi, string $jenis) use ($tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi, $perUker, $kolom) {
+            if ($tanggalReferensi === null) {
+                return [$jenis => collect()];
+            }
+
+            $nilai = $this->dasar($tab, $areaId, $cabangId, $ukerId, $produk, $segmentasi)
+                ->when(! $perUker, fn (Builder $q) => $q->where('cabang_id', '!=', self::ROLLUP_REGION_ID))
+                ->where('tanggal', $tanggalReferensi)
+                ->groupBy($kolom)
+                ->selectRaw("{$kolom} as entitas_id, SUM(baki_debet) as total")
+                ->pluck('total', 'entitas_id');
+
+            return [$jenis => $nilai];
+        });
+
+        $ids = collect($aktual->keys())->merge($target->keys());
+        foreach ($pembanding as $nilaiPembanding) {
+            $ids = $ids->merge($nilaiPembanding->keys());
+        }
+        $ids = $ids->unique()->values();
+
         $entitas = $perUker
             ? Uker::query()
                 ->with(['cabang:id,nama,area_id', 'cabang.area:id,nama'])
-                ->whereIn('id', $aktual->keys())
+                ->whereIn('id', $ids)
                 ->get(['id', 'cabang_id', 'nama'])
                 ->keyBy('id')
             : Cabang::query()
                 ->with('area:id,nama')
-                ->whereIn('id', $aktual->keys())
+                ->whereIn('id', $ids)
                 ->get(['id', 'area_id', 'nama'])
                 ->keyBy('id');
 
-        $baris = $aktual->map(function ($total, $entitasId) use ($target, $entitas, $perUker) {
+        $baris = $ids->map(function ($entitasId) use ($aktual, $target, $entitas, $perUker, $referensi, $pembanding) {
             $rka = (float) ($target[$entitasId] ?? 0);
-            $nilai = (float) $total;
+            $nilai = (float) ($aktual[$entitasId] ?? 0);
             $detail = $entitas->get((int) $entitasId);
             $cabang = $perUker ? $detail?->cabang : $detail;
+            $delta = [];
+
+            foreach ($referensi as $jenis => $tanggalReferensi) {
+                $nilaiPembanding = $tanggalReferensi === null
+                    ? null
+                    : (float) ($pembanding->get($jenis)?->get($entitasId) ?? 0);
+
+                $delta[$jenis] = Delta::hitung($nilai, $nilaiPembanding);
+            }
 
             return [
                 'id' => (int) $entitasId,
@@ -409,11 +450,22 @@ class PinjamanService
                 'target' => Satuan::toJuta($rka),
                 'pencapaian' => $rka > 0 ? round($nilai / $rka * 100, 2) : null,
                 'gap' => Satuan::toJuta($nilai - $rka),
+                'dtd' => $delta['dtd'],
+                'mtd' => $delta['mtd'],
+                'ytd' => $delta['ytd'],
+                'yoy' => $delta['yoy'],
             ];
         })->values()->sortByDesc('nilai')->values()->all();
 
         return [
             'tanggal' => $posisi->toDateString(),
+            'tanggal_referensi' => $referensi,
+            'label_delta' => [
+                ['key' => 'dtd', 'label' => 'D-1'],
+                ['key' => 'mtd', 'label' => 'MTD'],
+                ['key' => 'ytd', 'label' => 'YTD'],
+                ['key' => 'yoy', 'label' => 'YOY'],
+            ],
             'tab' => $tab,
             'inverse' => in_array($tab, self::TAB_INVERSE, true),
             'grouping' => $perUker ? 'uker' : 'cabang',

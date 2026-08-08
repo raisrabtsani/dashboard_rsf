@@ -44,7 +44,7 @@ const dirty = computed(() =>
     Object.keys(applied).some((key) => (pending[key] ?? null) !== (applied[key] ?? null)),
 );
 
-const opsi = reactive({ area: [], cabang: [], uker: [] });
+const opsi = reactive({ area: [], cabang: [], uker: [], tanggal_maks: null, tanggal_min: null });
 const kpiMeta = ref([]);
 const selectedKpi = ref(null);
 const snapshot = ref(null);
@@ -169,6 +169,8 @@ async function muatOpsi() {
     opsi.area = data.area ?? [];
     opsi.cabang = data.cabang ?? [];
     opsi.uker = data.uker ?? [];
+    opsi.tanggal_maks = data.tanggal_maks ?? null;
+    opsi.tanggal_min = data.tanggal_min ?? null;
     kpiMeta.value = data.kpi ?? [];
 
     if (!kpiMeta.value.some((k) => k.kode === selectedKpi.value)) {
@@ -223,10 +225,25 @@ function muatSemua() {
     return Promise.all([muatKartu(), muatSemuaChart(), muatTabel()]);
 }
 
-function terapkan() {
+async function terapkan() {
+    if (!dirty.value) return;
+
     Object.assign(applied, pending);
     drilldown.value = null;
-    muatSemua();
+    await muatSemua();
+}
+
+async function resetFilter() {
+    pending.tanggal = opsi.tanggal_maks ?? props.tanggalAwal;
+    pending.area_id = null;
+    pending.cabang_id = null;
+    pending.uker_id = null;
+
+    Object.assign(applied, pending);
+    drilldown.value = null;
+
+    await muatOpsi();
+    await muatSemua();
 }
 
 async function gantiToggle(key) {
@@ -291,46 +308,81 @@ onMounted(async () => {
                     </div>
                 </div>
 
-                <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto]">
+                <section class="rounded-[20px] border border-slate-200 bg-white px-4 py-3.5 shadow-sm">
+                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto] xl:items-end">
                         <label class="block">
-                            <span class="mb-1.5 block text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Tanggal</span>
-                            <input v-model="pending.tanggal" type="date" class="h-12 w-full rounded-xl border-slate-200 text-sm font-semibold text-slate-700 shadow-sm focus:border-brand-500 focus:ring-brand-500" />
+                            <span class="block text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-400">Periode</span>
+                            <div class="relative mt-1.5 h-12 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm ring-1 ring-slate-200 transition">
+                                <div class="flex h-full items-center px-4 pr-11 text-sm font-bold text-slate-800">
+                                    {{ tanggalPanjang(pending.tanggal) }}
+                                </div>
+                                <svg class="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="m6 8 4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
+                                </svg>
+                                <input
+                                    v-model="pending.tanggal"
+                                    type="date"
+                                    :min="opsi.tanggal_min ?? undefined"
+                                    :max="opsi.tanggal_maks ?? undefined"
+                                    class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                                    aria-label="Pilih periode"
+                                />
+                            </div>
                         </label>
 
                         <label v-if="scope.bolehPilihArea.value" class="block">
-                            <span class="mb-1.5 block text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Area</span>
-                            <select v-model="pending.area_id" class="h-12 w-full rounded-xl border-slate-200 text-sm font-semibold text-slate-700 shadow-sm focus:border-brand-500 focus:ring-brand-500">
+                            <span class="block text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-400">Area</span>
+                            <select v-model="pending.area_id" class="mt-1.5 h-12 w-full rounded-2xl border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 shadow-sm focus:border-brand-500 focus:ring-brand-500">
                                 <option :value="null">Semua Area</option>
                                 <option v-for="a in opsi.area" :key="a.id" :value="a.id">{{ a.nama }}</option>
                             </select>
                         </label>
 
                         <label v-if="scope.bolehPilihCabang.value" class="block">
-                            <span class="mb-1.5 block text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Cabang</span>
-                            <select v-model="pending.cabang_id" class="h-12 w-full rounded-xl border-slate-200 text-sm font-semibold text-slate-700 shadow-sm focus:border-brand-500 focus:ring-brand-500">
+                            <span class="block text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-400">Cabang</span>
+                            <select v-model="pending.cabang_id" class="mt-1.5 h-12 w-full rounded-2xl border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 shadow-sm focus:border-brand-500 focus:ring-brand-500">
                                 <option :value="null">Semua Cabang</option>
                                 <option v-for="c in opsi.cabang" :key="c.id" :value="c.id">{{ c.nama }}</option>
                             </select>
                         </label>
 
                         <label v-if="scope.bolehPilihUker.value" class="block">
-                            <span class="mb-1.5 block text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Unit Kerja</span>
-                            <select v-model="pending.uker_id" class="h-12 w-full rounded-xl border-slate-200 text-sm font-semibold text-slate-700 shadow-sm focus:border-brand-500 focus:ring-brand-500">
+                            <span class="block text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-400">Unit Kerja</span>
+                            <select v-model="pending.uker_id" class="mt-1.5 h-12 w-full rounded-2xl border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 shadow-sm focus:border-brand-500 focus:ring-brand-500">
                                 <option :value="null">Semua Unit Kerja</option>
                                 <option v-for="u in opsi.uker" :key="u.id" :value="u.id">{{ u.nama }}</option>
                             </select>
                         </label>
 
-                        <div class="flex items-end">
+                        <div class="flex items-end gap-3">
                             <button
                                 type="button"
-                                class="inline-flex h-12 w-full min-w-[145px] items-center justify-center gap-2 rounded-xl bg-[#075dcc] px-5 text-sm font-black text-white shadow-[0_8px_18px_rgba(7,93,204,0.25)] transition hover:bg-[#064fac]"
-                                :class="dirty ? 'ring-2 ring-amber-300' : ''"
+                                class="inline-flex h-12 min-w-[120px] items-center justify-center gap-2 rounded-2xl border border-blue-100 bg-blue-50 px-5 text-sm font-bold text-[#0756bd] shadow-sm transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                :disabled="memuat.kartu || memuat.chart || memuat.tabel"
+                                @click="resetFilter"
+                            >
+                                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                                    <path d="M3 3v5h5" />
+                                </svg>
+                                Reset
+                            </button>
+
+                            <button
+                                type="button"
+                                class="inline-flex h-12 min-w-[190px] items-center justify-center gap-2 rounded-2xl px-5 text-sm font-extrabold text-white shadow-sm transition disabled:cursor-not-allowed"
+                                :class="dirty ? 'bg-[#0756bd] hover:bg-[#064fac]' : 'bg-[#0756bd] opacity-50 cursor-default'"
+                                :disabled="memuat.kartu || memuat.chart || memuat.tabel || !dirty"
                                 @click="terapkan"
                             >
-                                <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m12.5 12.5 4 4"/></svg>
-                                Terapkan
+                                <svg v-if="dirty" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="m21 21-4.35-4.35" stroke-linecap="round" />
+                                    <circle cx="11" cy="11" r="7" />
+                                </svg>
+                                <svg v-else class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                    <path d="m5 12 4 4L19 6" stroke-linecap="round" stroke-linejoin="round" />
+                                </svg>
+                                {{ dirty ? 'Terapkan' : 'Sudah Diterapkan' }}
                             </button>
                         </div>
                     </div>

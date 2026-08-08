@@ -415,6 +415,48 @@ class PinjamanDashboardTest extends TestCase
         $this->assertNotEmpty($bogor['area_head']);
     }
 
+    public function test_ranking_cabang_mengirim_d1_mtd_ytd_dan_yoy_beserta_persentasenya(): void
+    {
+        $data = $this->actingAs($this->admin())
+            ->getJson('/api/pinjaman/branch-pencapaian?tanggal='.self::POSISI.'&tab=total')
+            ->assertOk()
+            ->json();
+
+        $bogor = collect($data['baris'])->firstWhere('id', self::CABANG_A);
+
+        $this->assertSame([
+            'dtd' => '2026-06-17',
+            'mtd' => '2026-05-31',
+            'ytd' => '2025-12-31',
+            'yoy' => '2025-06-18',
+        ], $data['tanggal_referensi']);
+        $this->assertSame(['dtd', 'mtd', 'ytd', 'yoy'], collect($data['label_delta'])->pluck('key')->all());
+        $this->assertSame('D-1', $data['label_delta'][0]['label']);
+
+        $this->assertSame(25.0, (float) $bogor['dtd']['nilai']);
+        $this->assertSame(2.56, (float) $bogor['dtd']['persen']);
+        $this->assertSame(130.0, (float) $bogor['mtd']['nilai']);
+        $this->assertSame(14.94, (float) $bogor['mtd']['persen']);
+        $this->assertSame(250.0, (float) $bogor['ytd']['nilai']);
+        $this->assertSame(33.33, (float) $bogor['ytd']['persen']);
+        $this->assertSame(400.0, (float) $bogor['yoy']['nilai']);
+        $this->assertSame(66.67, (float) $bogor['yoy']['persen']);
+    }
+
+    public function test_ranking_sml_tetap_memakai_yoy_bukan_mom(): void
+    {
+        $data = $this->actingAs($this->admin())
+            ->getJson('/api/pinjaman/branch-pencapaian?tanggal='.self::POSISI.'&tab=sml')
+            ->assertOk()
+            ->json();
+
+        $bogor = collect($data['baris'])->firstWhere('id', self::CABANG_A);
+
+        $this->assertArrayHasKey('yoy', $bogor);
+        $this->assertSame(60.0, (float) $bogor['yoy']['nilai']);
+        $this->assertSame(100.0, (float) $bogor['yoy']['persen']);
+    }
+
     public function test_filter_segmentasi_ranking_hanya_menampilkan_segmen_terpilih(): void
     {
         $data = $this->actingAs($this->admin())

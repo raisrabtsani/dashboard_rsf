@@ -18,9 +18,9 @@ class QrisService extends MerchantService
      * @var list<array<string, mixed>>
      */
     public const KPI = [
-        ['kode' => 'USER_QRIS', 'label' => 'User QRIS', 'flow' => false, 'target' => true, 'rupiah' => false, 'inverse' => false, 'alias' => ['pengguna qris', 'jumlah user qris', 'user']],
+        ['kode' => 'USER_QRIS', 'label' => 'User QRIS', 'flow' => false, 'target' => true, 'rupiah' => false, 'inverse' => false, 'alias' => ['pengguna qris', 'jumlah user qris', 'jml qris', 'jumlah qris', 'user']],
         ['kode' => 'QRIS_PRODUKTIF', 'label' => 'QRIS Produktif', 'flow' => false, 'target' => true, 'rupiah' => false, 'inverse' => false, 'alias' => ['produktif', 'qris aktif', 'qris produktif']],
-        ['kode' => 'SALES_VOLUME', 'label' => 'Sales Volume', 'flow' => true, 'target' => true, 'rupiah' => true, 'inverse' => false, 'alias' => ['sv', 'volume penjualan', 'sales vol']],
+        ['kode' => 'SALES_VOLUME', 'label' => 'Sales Volume', 'flow' => true, 'target' => true, 'rupiah' => true, 'inverse' => false, 'alias' => ['sv', 'volume penjualan', 'sales vol', 'sales volume qris', 'sales_volume_qris']],
         ['kode' => 'JUMLAH_TRX', 'label' => 'Jumlah Transaksi', 'flow' => true, 'target' => false, 'rupiah' => false, 'inverse' => false, 'alias' => ['trx', 'transaksi', 'jml trx', 'jumlah trx']],
     ];
 

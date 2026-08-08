@@ -500,7 +500,8 @@ class PresentService
 
     /**
      * Rincian Pinjaman disederhanakan menjadi Micro, SME, dan Consumer.
-     * SME mencakup Kecil, Menengah, serta Commercial.
+     * Pemetaan mengikuti nilai kolom `segmen` pada data sumber:
+     * Micro = Micro dan SME = Small.
      *
      * @return list<array<string, mixed>>
      */
@@ -516,8 +517,8 @@ class PresentService
         $mtdTgl = $this->tanggalTersedia(self::PINJAMAN, $areaId, $posisi->copy()->subMonthNoOverflow()->endOfMonth()->toDateString());
         $ytdTgl = $this->tanggalTersedia(self::PINJAMAN, $areaId, $posisi->copy()->subYear()->endOfYear()->toDateString());
         $kelompok = [
-            'Micro' => ['Mikro'],
-            'SME' => ['Kecil', 'Menengah', 'Commercial', 'Komersial'],
+            'Micro' => ['Micro'],
+            'SME' => ['Small'],
             'Consumer' => ['Konsumer', 'Consumer'],
         ];
 
@@ -734,17 +735,73 @@ class PresentService
      */
     private function rasio(?int $areaId, string $tanggal): array
     {
-        $dpkTgl = $this->tanggalTersedia(self::DPK, $areaId, $tanggal);
-        $pinjamanTgl = $this->tanggalTersedia(self::PINJAMAN, $areaId, $tanggal);
-
-        $dpk = $dpkTgl === null ? null : $this->total(self::DPK, $areaId, $dpkTgl);
-        $casa = $dpkTgl === null ? null : $this->total(self::DPK, $areaId, $dpkTgl, ['produk' => self::CASA]);
-        $os = $pinjamanTgl === null ? null : $this->total(self::PINJAMAN, $areaId, $pinjamanTgl);
+        $posisi = Carbon::parse($tanggal)->startOfDay();
+        $mtdBatas = $posisi->copy()->subMonthNoOverflow()->endOfMonth()->toDateString();
+        $ytdBatas = $posisi->copy()->subYear()->endOfYear()->toDateString();
+        $yoyBatas = $posisi->copy()->subYear()->toDateString();
 
         return [
-            $this->rasioItem('casa', '%CASA', 'CASA / DPK', $casa, $dpk),
-            $this->rasioItem('ldr', '%LDR', 'OS Pinjaman / DPK', $os, $dpk),
+            $this->rasioItem(
+                key: 'casa',
+                judul: '%CASA',
+                deskripsi: 'CASA / DPK',
+                posisi: $this->rasioPosisi('casa', $areaId, $tanggal),
+                target: $this->targetRasioPresent('casa', $areaId, (int) $posisi->year, (int) $posisi->month),
+                mtd: $this->rasioPosisi('casa', $areaId, $mtdBatas)['nilai'],
+                ytd: $this->rasioPosisi('casa', $areaId, $ytdBatas)['nilai'],
+                yoy: $this->rasioPosisi('casa', $areaId, $yoyBatas)['nilai'],
+                inverse: false,
+            ),
+            $this->rasioItem(
+                key: 'ldr',
+                judul: '%LDR',
+                deskripsi: 'OS Pinjaman / DPK',
+                posisi: $this->rasioPosisi('ldr', $areaId, $tanggal),
+                target: $this->targetRasioPresent('ldr', $areaId, (int) $posisi->year, (int) $posisi->month),
+                mtd: $this->rasioPosisi('ldr', $areaId, $mtdBatas)['nilai'],
+                ytd: $this->rasioPosisi('ldr', $areaId, $ytdBatas)['nilai'],
+                yoy: $this->rasioPosisi('ldr', $areaId, $yoyBatas)['nilai'],
+                inverse: true,
+            ),
         ];
+    }
+
+    /**
+     * Nilai rasio pada posisi terakhir yang tersedia sampai batas tanggal.
+     *
+     * @return array{nilai: float|null, pembilang: float|null, penyebut: float|null}
+     */
+    private function rasioPosisi(string $key, ?int $areaId, string $batas): array
+    {
+        $dpkTgl = $this->tanggalTersedia(self::DPK, $areaId, $batas);
+        $pinjamanTgl = $key === 'ldr'
+            ? $this->tanggalTersedia(self::PINJAMAN, $areaId, $batas)
+            : null;
+
+        if ($dpkTgl === null || ($key === 'ldr' && $pinjamanTgl === null)) {
+            return ['nilai' => null, 'pembilang' => null, 'penyebut' => null];
+        }
+
+        $penyebut = $this->total(self::DPK, $areaId, $dpkTgl);
+        $pembilang = $key === 'casa'
+            ? $this->total(self::DPK, $areaId, $dpkTgl, ['produk' => self::CASA])
+            : $this->total(self::PINJAMAN, $areaId, $pinjamanTgl);
+
+        return [
+            'nilai' => $this->hitungRasio($pembilang, $penyebut),
+            'pembilang' => $pembilang,
+            'penyebut' => $penyebut,
+        ];
+    }
+
+    private function targetRasioPresent(string $key, ?int $areaId, int $tahun, int $bulan): ?float
+    {
+        $penyebut = $this->targetBulan(self::RKA_DPK, $areaId, $tahun, $bulan);
+        $pembilang = $key === 'casa'
+            ? $this->targetBulan(self::RKA_DPK, $areaId, $tahun, $bulan, ['produk' => self::CASA])
+            : $this->targetBulan(self::RKA_PINJAMAN, $areaId, $tahun, $bulan);
+
+        return $this->hitungRasio($pembilang, $penyebut);
     }
 
     /**
@@ -1097,19 +1154,42 @@ class PresentService
     /**
      * @return array<string, mixed>
      */
-    private function rasioItem(string $key, string $judul, string $deskripsi, ?float $pembilang, ?float $penyebut): array
-    {
-        $nilai = ($pembilang === null || $penyebut === null || $penyebut == 0.0)
-            ? null
-            : round($pembilang / $penyebut * 100, 2);
+    private function rasioItem(
+        string $key,
+        string $judul,
+        string $deskripsi,
+        array $posisi,
+        ?float $target,
+        ?float $mtd,
+        ?float $ytd,
+        ?float $yoy,
+        bool $inverse,
+    ): array {
+        $nilai = $posisi['nilai'] ?? null;
+        $pencapaian = null;
+
+        if ($nilai !== null && $target !== null && $nilai != 0.0 && $target != 0.0) {
+            $pencapaian = $inverse
+                ? round($target / $nilai * 100, 2)
+                : round($nilai / $target * 100, 2);
+        }
 
         return [
             'key' => $key,
             'judul' => $judul,
             'deskripsi' => $deskripsi,
+            'inverse' => $inverse,
             'nilai' => $nilai,
-            'pembilang' => Satuan::toJuta($pembilang),
-            'penyebut' => Satuan::toJuta($penyebut),
+            'target' => $target,
+            'pencapaian' => $pencapaian,
+            'gap' => ($nilai === null || $target === null) ? null : round($nilai - $target, 2),
+            'delta' => [
+                'mtd' => $this->deltaRasio($nilai, $mtd),
+                'ytd' => $this->deltaRasio($nilai, $ytd),
+                'yoy' => $this->deltaRasio($nilai, $yoy),
+            ],
+            'pembilang' => Satuan::toJuta($posisi['pembilang'] ?? null),
+            'penyebut' => Satuan::toJuta($posisi['penyebut'] ?? null),
         ];
     }
 

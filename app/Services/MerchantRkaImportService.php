@@ -48,6 +48,9 @@ abstract class MerchantRkaImportService
     {
         ['baris' => $baris, 'dilewati' => $dilewati] = $this->baca($path, $namaAsli ?? basename($path));
 
+        $barisSumber = $baris->count();
+        $baris = $this->agregasiBaris($baris)->values();
+
         $model = $this->modelClass();
 
         DB::transaction(function () use ($baris, $model) {
@@ -58,13 +61,33 @@ abstract class MerchantRkaImportService
             ));
         });
 
-        return [
+        return array_merge([
             'tahun' => $baris->pluck('tahun')->unique()->sort()->values()->all(),
             'baris' => $baris->count(),
+            'baris_sumber' => $barisSumber,
+            'baris_digabung' => max(0, $barisSumber - $baris->count()),
             'dilewati' => $dilewati,
             'total_target' => (float) $baris->sum(fn (array $b) => $b['target']),
             'laporan' => $this->laporanImport(),
-        ];
+        ], $this->metadataAgregasi());
+    }
+
+    /**
+     * Hook agregasi sebelum upsert. Default-nya tidak mengubah baris.
+     * Domain tertentu dapat menerapkan SUMIF sesuai kebutuhan bisnis.
+     *
+     * @param  Collection<int, array<string, mixed>>  $baris
+     * @return Collection<int, array<string, mixed>>
+     */
+    protected function agregasiBaris(Collection $baris): Collection
+    {
+        return $baris;
+    }
+
+    /** @return array<string, mixed> */
+    protected function metadataAgregasi(): array
+    {
+        return [];
     }
 
     /**
@@ -98,6 +121,26 @@ abstract class MerchantRkaImportService
     }
 
     /**
+     * Normalisasi KPI dapat dipersempit oleh importer domain tertentu.
+     */
+    protected function kanonikKpi(string $nama): ?string
+    {
+        $service = $this->serviceClass();
+
+        return $service::kanonikKpi($nama);
+    }
+
+    /**
+     * @return list<string>
+     */
+    protected function labelKpiValid(): array
+    {
+        $service = $this->serviceClass();
+
+        return array_column($service::KPI, 'label');
+    }
+
+    /**
      * @return array{baris: Collection<int, array<string, mixed>>, dilewati: int}
      */
     private function baca(string $path, string $namaBerkas): array
@@ -106,11 +149,10 @@ abstract class MerchantRkaImportService
         $baris = PetaKolom::petakan($mentah, self::ALIAS, self::KOLOM, $namaBerkas);
 
         $ukerValid = Uker::query()->pluck('cabang_id', 'id');
-        $service = $this->serviceClass();
         $now = Carbon::now();
         $dilewati = 0;
 
-        $hasil = $this->petakanBarisAman($baris, function (array $r, int $i) use ($ukerValid, $service, $now, &$dilewati) {
+        $hasil = $this->petakanBarisAman($baris, function (array $r, int $i) use ($ukerValid, $now, &$dilewati) {
             $nomor = $i + 2;
 
             $ukerId = (int) trim((string) $r['id_uker']);
@@ -120,14 +162,14 @@ abstract class MerchantRkaImportService
                 throw ImportException::berkas("Baris {$nomor}: id_uker {$ukerId} tidak ada di master uker.");
             }
 
-            $kode = $service::kanonikKpi((string) $r['kpi']);
+            $kode = $this->kanonikKpi((string) $r['kpi']);
 
             if ($kode === null) {
                 throw ImportException::berkas(sprintf(
                     "Baris %d: KPI '%s' tidak dikenal. KPI yang valid: %s.",
                     $nomor,
                     trim((string) $r['kpi']),
-                    implode(', ', array_column($service::KPI, 'label')),
+                    implode(', ', $this->labelKpiValid()),
                 ));
             }
 

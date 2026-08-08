@@ -12,5 +12,6 @@ defineProps({
         judul="Admin — RKA EDC"
         :kolom-berkas="kolomBerkas"
         label-kelompok="KPI"
+        petunjuk-kpi="Sales_Volume_Marginal = Sales Volume; EDC_Produktif = Produktif; TID = TID; MID = MID. Target 0 pada Sales_Volume_Marginal tetap masuk ke Sales Volume."
     />
 </template>

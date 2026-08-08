@@ -47,6 +47,14 @@ class RkaEdcController extends Controller
             implode(', ', $hasil['tahun']),
         );
 
+        if (($hasil['sales_volume_baris_digabung'] ?? 0) > 0) {
+            $pesan .= sprintf(
+                ' RKA Sales Volume: %s baris sumber dijumlahkan menjadi %s kombinasi berdasarkan id_uker, bulan, tahun, dan KPI yang sama.',
+                number_format($hasil['sales_volume_baris_sumber'], 0, ',', '.'),
+                number_format($hasil['sales_volume_kombinasi'], 0, ',', '.'),
+            );
+        }
+
         if ($hasil['dilewati'] > 0) {
             $pesan .= sprintf(
                 ' %s baris dilewati karena kolom target kosong.',
