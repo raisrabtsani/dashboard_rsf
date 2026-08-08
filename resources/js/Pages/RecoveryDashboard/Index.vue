@@ -41,9 +41,9 @@ const snapshot = ref(null);
 const charts = reactive({});
 const branch = ref({ grouping: 'cabang', baris: [], tanggal_referensi: {} });
 const drilldown = ref(null);
-const filterAreaHeadTabel = ref('');
+const filterCabangTabel = ref(null);
 const memuat = reactive({ kartu: false, chart: false, tabel: false });
-const sort = useTableSort('nilai', 'desc');
+const sort = useTableSort('pencapaian', 'desc');
 
 const CARD_ORDER = ['total', 'micro', 'sme', 'consumer'];
 const CARD_SCOPE = {
@@ -65,22 +65,7 @@ const kartuUrut = computed(() => {
     return CARD_ORDER.map((key) => peta[key]).filter(Boolean);
 });
 
-const opsiAreaHeadTabel = computed(() => {
-    const nama = (branch.value.baris ?? [])
-        .map((row) => String(row.area_nama ?? '').trim())
-        .filter(Boolean);
-
-    return [...new Set(nama)].sort((a, b) => a.localeCompare(b, 'id'));
-});
-
-const barisTerurut = computed(() => {
-    const rows = (branch.value.baris ?? []).filter((row) => {
-        if (!filterAreaHeadTabel.value) return true;
-        return String(row.area_nama ?? '').trim() === filterAreaHeadTabel.value;
-    });
-
-    return sort.urutkan(rows);
-});
+const barisTerurut = computed(() => sort.urutkan(branch.value.baris ?? []));
 
 const judulTabel = computed(() => `KINERJA RECOVERY ${branch.value.grouping === 'uker' ? 'UNIT KERJA' : 'PER CABANG'}`);
 
@@ -239,7 +224,8 @@ async function muatTabel() {
     try {
         branch.value = await fetchBranchPencapaian({
             ...applied,
-            cabang_id: drilldown.value ?? applied.cabang_id,
+            cabang_id: filterCabangTabel.value ?? drilldown.value ?? applied.cabang_id,
+            uker_id: filterCabangTabel.value ? null : applied.uker_id,
         });
     } finally {
         memuat.tabel = false;
@@ -266,7 +252,7 @@ async function resetFilter() {
 
     Object.assign(applied, pending);
     drilldown.value = null;
-    filterAreaHeadTabel.value = '';
+    filterCabangTabel.value = null;
     penyesuaianTanggal.value = null;
 
     await muatOpsi();
@@ -274,10 +260,11 @@ async function resetFilter() {
 }
 
 function resetFilterTabel() {
-    filterAreaHeadTabel.value = '';
+    filterCabangTabel.value = null;
 }
 
 watch(drilldown, () => muatTabel());
+watch(filterCabangTabel, () => muatTabel());
 watch(
     () => pending.area_id,
     async (areaId) => {
@@ -509,14 +496,14 @@ onMounted(async () => {
 
                         <div class="flex flex-wrap items-end gap-2">
                             <label class="min-w-[220px]">
-                                <span class="mb-1 block text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-400">Area Head</span>
+                                <span class="mb-1 block text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-400">Cabang</span>
                                 <div class="relative">
                                     <select
-                                        v-model="filterAreaHeadTabel"
+                                        v-model="filterCabangTabel"
                                         class="h-10 w-full appearance-none rounded-xl border-slate-200 bg-white pl-3 pr-9 text-xs font-bold text-slate-700 shadow-sm focus:border-blue-400 focus:ring-blue-400"
                                     >
-                                        <option value="">Semua Area Head</option>
-                                        <option v-for="nama in opsiAreaHeadTabel" :key="nama" :value="nama">{{ nama }}</option>
+                                        <option :value="null">Semua Cabang</option>
+                                        <option v-for="c in opsi.cabang" :key="c.id" :value="c.id">{{ c.nama }}</option>
                                     </select>
                                     <svg class="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
                                         <path d="m6 8 4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
@@ -527,7 +514,7 @@ onMounted(async () => {
                             <button
                                 type="button"
                                 class="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:cursor-default disabled:opacity-45"
-                                :disabled="!filterAreaHeadTabel"
+                                :disabled="!filterCabangTabel"
                                 @click="resetFilterTabel"
                             >
                                 <svg class="h-4 w-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -547,7 +534,7 @@ onMounted(async () => {
                                 <tr class="border-b border-slate-100">
                                     <th class="px-3 py-3 text-center text-[10px] font-extrabold uppercase tracking-[0.14em]">#</th>
                                     <th class="cursor-pointer px-3 py-3 text-left text-[10px] font-extrabold uppercase tracking-[0.14em]" @click="sort.urutkanKolom('nama')">
-                                        <span class="inline-flex items-center gap-1.5">Nama Cabang <SortArrow :arah="sort.arahUntuk('nama')" /></span>
+                                        <span class="inline-flex items-center gap-1.5">Nama {{ branch.grouping === 'uker' ? 'Unit Kerja' : 'Cabang' }} <SortArrow :arah="sort.arahUntuk('nama')" /></span>
                                     </th>
                                     <th class="cursor-pointer px-3 py-3 text-right text-[10px] font-extrabold uppercase tracking-[0.14em]" @click="sort.urutkanKolom('nilai')">
                                         <span class="inline-flex items-center gap-1.5">Actual <SortArrow :arah="sort.arahUntuk('nilai')" /></span>
@@ -571,6 +558,7 @@ onMounted(async () => {
                                     <td class="px-3 py-2.5 text-center text-xs text-slate-400">{{ index + 1 }}</td>
                                     <td class="px-3 py-2.5">
                                         <p class="font-semibold text-slate-800">{{ row.nama }}</p>
+                                        <p v-if="branch.grouping === 'uker' && row.cabang_nama" class="mt-0.5 text-[10px] font-semibold text-slate-500">Cabang: {{ row.cabang_nama }}</p>
                                         <p v-if="row.area_nama" class="mt-0.5 text-[10px] font-semibold text-[#2f72d8]">Area Head: {{ row.area_nama }}</p>
                                     </td>
                                     <td class="px-3 py-2.5 text-right text-xs font-bold text-slate-800">{{ formatAngka(row.nilai) }}</td>

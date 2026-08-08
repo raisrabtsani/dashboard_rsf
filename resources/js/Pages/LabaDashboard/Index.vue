@@ -60,7 +60,7 @@ const charts = reactive({});
 const branch = ref({ grouping: 'cabang', baris: [] });
 const drilldown = ref(null);
 const memuat = reactive({ kartu: false, chart: false, tabel: false });
-const sort = useTableSort('nilai', 'desc');
+const sort = useTableSort('pencapaian', 'desc');
 
 const periodeLabel = computed(() => {
     const bulan = BULAN.find((item) => item.value === Number(applied.bulan));
@@ -309,6 +309,10 @@ watch(
     },
 );
 
+function resetFilterTabel() {
+    drilldown.value = null;
+}
+
 watch(drilldown, () => muatTabel());
 
 onMounted(async () => {
@@ -547,14 +551,21 @@ onMounted(async () => {
                             <h3 class="mt-0.5 text-sm font-black uppercase tracking-wide text-slate-700">Posisi {{ periodeLabel }}</h3>
                         </div>
 
-                        <label class="min-w-[230px] space-y-1">
-                            <span class="block text-[9px] font-extrabold uppercase tracking-[0.12em] text-slate-400">Drill-down Cabang</span>
-                            <select v-model="drilldown" class="h-10 w-full rounded-xl border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm focus:border-blue-500 focus:ring-blue-500">
-                                <option :value="null">Semua Cabang</option>
-                                <option v-for="cabang in opsi.cabang" :key="cabang.id" :value="cabang.id">{{ cabang.nama }}</option>
-                            </select>
-                        </label>
+                        <div class="flex flex-wrap items-end gap-2">
+                            <label class="min-w-[230px] space-y-1">
+                                <span class="block text-[9px] font-extrabold uppercase tracking-[0.12em] text-slate-400">Cabang</span>
+                                <select v-model="drilldown" class="h-10 w-full rounded-xl border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                                    <option :value="null">Semua Cabang</option>
+                                    <option v-for="cabang in opsi.cabang" :key="cabang.id" :value="cabang.id">{{ cabang.nama }}</option>
+                                </select>
+                            </label>
+                            <button type="button" class="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:opacity-45" :disabled="!drilldown" @click="resetFilterTabel">
+                                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+                                Reset
+                            </button>
+                        </div>
                     </div>
+                    <div class="h-[3px] w-full bg-[linear-gradient(90deg,#2E7BFF_0%,#34C2FF_22%,#34D399_48%,#F5B940_68%,#E879F9_84%,#C084FC_100%)]"></div>
 
                     <div class="overflow-x-auto">
                         <table class="min-w-[1180px] w-full border-collapse text-[11px]">
@@ -577,6 +588,7 @@ onMounted(async () => {
                                     <td class="px-3 py-2.5 text-center font-semibold text-slate-400">{{ index + 1 }}</td>
                                     <td class="px-3 py-2.5">
                                         <p class="font-extrabold text-slate-700">{{ row.nama }}</p>
+                                        <p v-if="branch.grouping === 'uker' && row.cabang_nama" class="mt-0.5 text-[9px] font-semibold text-slate-500">Cabang: {{ row.cabang_nama }}</p>
                                         <p class="mt-0.5 text-[9px] font-semibold text-blue-500">Area Head: {{ row.area_nama ?? '–' }}</p>
                                     </td>
                                     <td class="px-3 py-2.5 text-right font-semibold tabular-nums text-slate-500">{{ formatAngka(row.posisi_bulan_lalu) }}</td>

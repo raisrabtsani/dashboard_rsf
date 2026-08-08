@@ -309,13 +309,14 @@ abstract class MerchantService
             ? Uker::query()->with('cabang.area')->whereIn('id', $aktual->keys())->get()->keyBy('id')
             : Cabang::query()->with('area')->whereIn('id', $aktual->keys())->get()->keyBy('id');
 
-        $baris = $aktual->map(function ($total, $entitasId) use ($target, $entitas, $rupiah, $punyaTarget, $pembanding) {
+        $baris = $aktual->map(function ($total, $entitasId) use ($target, $entitas, $rupiah, $punyaTarget, $pembanding, $perUker) {
             $nilai = (float) $total;
             $rka = (float) ($target[$entitasId] ?? 0);
             $model = $entitas[$entitasId] ?? null;
             $hasil = [
                 'id' => (int) $entitasId,
                 'nama' => $model?->nama ?? (string) $entitasId,
+                'cabang_nama' => $perUker ? $model?->cabang?->nama : null,
                 'area_nama' => $model?->area?->nama ?? $model?->cabang?->area?->nama,
                 'nilai' => $this->tampil($nilai, $rupiah),
                 'target' => $punyaTarget ? $this->tampil($rka, $rupiah) : null,

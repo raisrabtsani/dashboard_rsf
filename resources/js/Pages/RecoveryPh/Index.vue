@@ -26,6 +26,7 @@ const props = defineProps({
 
 const scopeAkses = useScope();
 const mode = ref(props.modeAwal ?? 'ph');
+const netDgKualitas = ref('sml');
 const pending = reactive({
     periode: props.periodeAwal.slice(0, 7),
     area_id: null,
@@ -40,15 +41,23 @@ const dirty = computed(() =>
 const opsi = reactive({ area: [], cabang: [], uker: [] });
 const snapshot = ref(null);
 const chart = ref(null);
-const branch = ref({ grouping: 'cabang', baris: [], bulan_sebelumnya: null, periode_lalu: null, desember_lalu: null, periode: null });
+const branch = ref({ grouping: 'cabang', baris: [], periode_lalu: null, desember_lalu: null, periode: null });
 const drilldown = ref(null);
 const scopeTabel = ref('total');
 const memuat = reactive({ kartu: false, chart: false, tabel: false });
 const sort = useTableSort('nilai', 'desc');
+let requestSnapshot = 0;
+let requestChart = 0;
+let requestTabel = 0;
 
 const TOGGLE = [
     { key: 'ph', label: 'PH' },
     { key: 'netdg', label: 'NET DG' },
+];
+
+const NETDG_KUALITAS = [
+    { key: 'sml', label: 'SML' },
+    { key: 'npl', label: 'NPL' },
 ];
 
 const SECTION_ORDER = ['total', 'micro', 'sme', 'consumer'];
@@ -94,7 +103,8 @@ const kartuUrut = computed(() => {
 const barisTerurut = computed(() => sort.urutkan(branch.value.baris ?? []));
 
 const judulHalaman = computed(() => 'PH & NET DG');
-const judulTabel = computed(() => `KINERJA ${mode.value === 'ph' ? 'PH' : 'NET DG'} ${branch.value.grouping === 'uker' ? 'UNIT KERJA' : 'PER CABANG'}`);
+const labelNetDgKualitas = computed(() => netDgKualitas.value.toUpperCase());
+const judulTabel = computed(() => `KINERJA ${mode.value === 'ph' ? 'PH' : `NET DG ${labelNetDgKualitas.value}`} ${branch.value.grouping === 'uker' ? 'UNIT KERJA' : 'PER CABANG'}`);
 const scopeTabelOptions = [
     { key: 'total', label: 'Semua Segmen' },
     { key: 'micro', label: 'PH Mikro' },
@@ -118,61 +128,16 @@ function bulanPendek(periode) {
     return m ? `${NAMA_BULAN[Number(m[2]) - 1].slice(0, 3).toUpperCase()} ${m[1].slice(2)}` : '—';
 }
 
-// PH dan Net DG adalah KPI inverse: kenaikan berarti memburuk (merah),
-// penurunan berarti membaik (hijau).
-function deltaKinerjaCls(nilai) {
-    return deltaCls(nilai, true);
-}
-
-function deltaKinerjaGelapCls(nilai) {
-    if (nilai === null || nilai === undefined || Number.isNaN(Number(nilai)) || Number(nilai) === 0) {
-        return 'text-white/70';
-    }
-
-    return Number(nilai) < 0 ? 'text-emerald-200' : 'text-rose-200';
-}
-
 function chartUntuk(key) {
     return chart.value?.seri?.[key] ?? null;
 }
 
-function hitungYoyPersen(sekarang, tahunLalu) {
-    if (
-        sekarang === null || sekarang === undefined
-        || tahunLalu === null || tahunLalu === undefined
-        || Number.isNaN(Number(sekarang)) || Number.isNaN(Number(tahunLalu))
-        || Number(tahunLalu) === 0
-    ) {
-        return null;
+function deltaCardCls(nilai) {
+    if (nilai === null || nilai === undefined || Number.isNaN(Number(nilai)) || Number(nilai) === 0) {
+        return 'text-white/80';
     }
 
-    return ((Number(sekarang) - Number(tahunLalu)) / Math.abs(Number(tahunLalu))) * 100;
-}
-
-function metrikYoyChart(key) {
-    const seri = chartUntuk(key);
-    const labels = seri?.label ?? [];
-    const akumulasiIni = seri?.tahun_ini?.akumulasi ?? [];
-    const akumulasiLalu = seri?.tahun_lalu?.akumulasi ?? [];
-    const bulananIni = seri?.tahun_ini?.bulanan ?? [];
-    const bulananLalu = seri?.tahun_lalu?.bulanan ?? [];
-
-    return labels.map((label, index) => ({
-        label,
-        yoyAkum: hitungYoyPersen(akumulasiIni[index], akumulasiLalu[index]),
-        yoyDelta: hitungYoyPersen(bulananIni[index], bulananLalu[index]),
-    }));
-}
-
-function gridMetrikYoy(key) {
-    return {
-        gridTemplateColumns: `repeat(${Math.max(1, metrikYoyChart(key).length)}, minmax(92px, 1fr))`,
-    };
-}
-
-function judulChart(card) {
-    const jenis = mode.value === 'ph' ? 'PH' : 'NET DG';
-    return card.key === 'total' ? `TOTAL ${jenis}` : `${jenis} ${card.judul}`;
+    return Number(nilai) > 0 ? 'text-emerald-300' : 'text-rose-300';
 }
 
 async function muatOpsi() {
@@ -183,53 +148,78 @@ async function muatOpsi() {
 }
 
 async function muatSnapshot() {
+    const nomor = ++requestSnapshot;
+    const kualitasDiminta = netDgKualitas.value;
+    const modeDiminta = mode.value;
     memuat.kartu = true;
     try {
-        snapshot.value = await fetchSnapshot({
-            mode: mode.value,
+        const data = await fetchSnapshot({
+            mode: modeDiminta,
             periode: periodeUntukApi(applied.periode),
             area_id: applied.area_id,
             cabang_id: applied.cabang_id,
             uker_id: applied.uker_id,
+            netdg_kualitas: kualitasDiminta,
         });
+
+        // Cegah respons SML yang lebih lambat menimpa respons NPL terbaru.
+        if (nomor === requestSnapshot && kualitasDiminta === netDgKualitas.value && modeDiminta === mode.value) {
+            snapshot.value = data;
+        }
     } finally {
-        memuat.kartu = false;
+        if (nomor === requestSnapshot) memuat.kartu = false;
     }
 }
 
 async function muatChart() {
+    const nomor = ++requestChart;
+    const kualitasDiminta = netDgKualitas.value;
+    const modeDiminta = mode.value;
     memuat.chart = true;
     try {
-        chart.value = await fetchChart({
-            mode: mode.value,
+        const data = await fetchChart({
+            mode: modeDiminta,
             periode: periodeUntukApi(applied.periode),
             area_id: applied.area_id,
             cabang_id: applied.cabang_id,
             uker_id: applied.uker_id,
+            netdg_kualitas: kualitasDiminta,
         });
+
+        if (nomor === requestChart && kualitasDiminta === netDgKualitas.value && modeDiminta === mode.value) {
+            chart.value = data;
+        }
     } finally {
-        memuat.chart = false;
+        if (nomor === requestChart) memuat.chart = false;
     }
 }
 
 async function muatTabel() {
     if (!scopeAkses.bolehLihatRanking.value) {
-        branch.value = { grouping: 'cabang', baris: [], bulan_sebelumnya: null, periode_lalu: null, desember_lalu: null, periode: null };
+        branch.value = { grouping: 'cabang', baris: [], periode_lalu: null, desember_lalu: null, periode: null };
         return;
     }
 
+    const nomor = ++requestTabel;
+    const kualitasDiminta = netDgKualitas.value;
+    const modeDiminta = mode.value;
     memuat.tabel = true;
     try {
-        branch.value = await fetchBranchPencapaian({
-            mode: mode.value,
+        const data = await fetchBranchPencapaian({
+            mode: modeDiminta,
             periode: periodeUntukApi(applied.periode),
             area_id: applied.area_id,
             cabang_id: drilldown.value ?? applied.cabang_id,
             uker_id: applied.uker_id,
             scope: scopeTabel.value,
+            netdg_kualitas: kualitasDiminta,
         });
+
+        if (nomor === requestTabel && kualitasDiminta === netDgKualitas.value && modeDiminta === mode.value) {
+            branch.value = data;
+        }
     } finally {
-        memuat.tabel = false;
+        if (nomor === requestTabel) memuat.tabel = false;
     }
 }
 
@@ -244,11 +234,16 @@ async function terapkan() {
     await muatSemua();
 }
 
+function resetFilterTabel() {
+    drilldown.value = null;
+}
+
 async function resetFilter() {
     pending.periode = String(props.periodeAwal).slice(0, 7);
     pending.area_id = null;
     pending.cabang_id = null;
     pending.uker_id = null;
+    netDgKualitas.value = 'sml';
     Object.assign(applied, pending);
     drilldown.value = null;
     opsi.uker = [];
@@ -259,7 +254,25 @@ async function resetFilter() {
 async function gantiMode(key) {
     if (mode.value === key) return;
     mode.value = key;
+
+    // Setiap masuk ke NET DG dimulai dari SML sebagai pilihan default.
+    if (key === 'netdg') {
+        netDgKualitas.value = 'sml';
+    }
+
     await muatOpsi();
+    await muatSemua();
+}
+
+async function gantiKualitasNetDg(key) {
+    if (mode.value !== 'netdg' || netDgKualitas.value === key) return;
+    netDgKualitas.value = key;
+
+    // Kosongkan hasil lama agar nilai SML tidak terlihat seolah-olah menjadi NPL
+    // ketika permintaan NPL masih diproses.
+    snapshot.value = null;
+    chart.value = null;
+    branch.value = { grouping: 'cabang', baris: [], periode_lalu: null, desember_lalu: null, periode: null };
     await muatSemua();
 }
 
@@ -296,17 +309,48 @@ onMounted(async () => {
             <div class="mx-auto w-full max-w-[1880px] space-y-4 px-3 sm:px-4 lg:px-5">
                 <div class="flex flex-wrap items-center justify-between gap-4">
                     <h1 class="text-[34px] font-extrabold tracking-tight text-[#0857C3]">{{ judulHalaman }}</h1>
-                    <div class="inline-flex rounded-2xl bg-white p-1.5 shadow-sm ring-1 ring-black/5">
-                        <button
-                            v-for="item in TOGGLE"
-                            :key="item.key"
-                            type="button"
-                            class="min-w-[120px] rounded-xl px-5 py-3 text-lg font-extrabold transition"
-                            :class="mode === item.key ? 'bg-[#0857C3] text-white shadow' : 'text-slate-400'"
-                            @click="gantiMode(item.key)"
+                    <div class="flex flex-wrap items-center gap-2">
+                        <Transition
+                            enter-active-class="transition duration-200"
+                            leave-active-class="transition duration-150"
+                            enter-from-class="-translate-x-2 opacity-0"
+                            leave-to-class="-translate-x-2 opacity-0"
                         >
-                            {{ item.label }}
-                        </button>
+                            <div
+                                v-if="mode === 'netdg'"
+                                class="inline-flex items-center gap-1 rounded-2xl bg-white p-1.5 shadow-sm ring-1 ring-black/5"
+                                aria-label="Filter kualitas kredit NET DG"
+                            >
+                                <span class="hidden pl-2 pr-1 text-[10px] font-extrabold uppercase tracking-[0.14em] text-slate-400 sm:inline">Kualitas</span>
+                                <button
+                                    v-for="item in NETDG_KUALITAS"
+                                    :key="item.key"
+                                    type="button"
+                                    class="min-w-[78px] rounded-xl px-4 py-3 text-sm font-extrabold transition"
+                                    :class="netDgKualitas === item.key
+                                        ? 'bg-gradient-to-r from-[#0A63D8] to-[#2F8BFF] text-white shadow'
+                                        : 'text-slate-500 hover:bg-slate-50'"
+                                    :disabled="memuat.kartu || memuat.chart || memuat.tabel"
+                                    @click="gantiKualitasNetDg(item.key)"
+                                >
+                                    {{ item.label }}
+                                </button>
+                            </div>
+                        </Transition>
+
+                        <div class="inline-flex rounded-2xl bg-white p-1.5 shadow-sm ring-1 ring-black/5">
+                            <button
+                                v-for="item in TOGGLE"
+                                :key="item.key"
+                                type="button"
+                                class="min-w-[120px] rounded-xl px-5 py-3 text-lg font-extrabold transition"
+                                :class="mode === item.key ? 'bg-[#0857C3] text-white shadow' : 'text-slate-400'"
+                                :disabled="memuat.kartu || memuat.chart || memuat.tabel"
+                                @click="gantiMode(item.key)"
+                            >
+                                {{ item.label }}
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -431,7 +475,7 @@ onMounted(async () => {
 
                     <section v-for="card in kartuUrut" :key="card.key" class="space-y-3">
                         <div class="text-sm font-extrabold uppercase tracking-wide text-[#0857C3]">
-                            {{ mode === 'ph' ? 'PH ' : 'NET DG ' }}{{ card.judul }}
+                            {{ mode === 'ph' ? 'PH ' : `NET DG ${labelNetDgKualitas} ` }}{{ card.judul }}
                         </div>
 
                         <div class="overflow-hidden rounded-[22px] bg-gradient-to-r from-[#0857C3] to-[#2F8BFF] text-white shadow-lg">
@@ -439,65 +483,35 @@ onMounted(async () => {
                                 <div>
                                     <p class="text-xs font-bold uppercase tracking-[0.22em] text-white/75">{{ card.judul }}</p>
                                     <p class="mt-1 text-5xl font-extrabold leading-none tracking-tight">{{ formatAngka(card.akumulasi) }}</p>
-                                    <p class="mt-2 text-sm text-white/80">Akumulasi s/d {{ bulanTahunPanjang(snapshot?.periode) }}</p>
+                                    <p class="mt-2 text-sm text-white/80">
+                                        {{ mode === 'netdg' ? 'Posisi akhir' : 'Akumulasi s/d' }} {{ bulanTahunPanjang(snapshot?.periode) }}
+                                    </p>
                                 </div>
                                 <div class="rounded-2xl bg-white/10 px-5 py-4 text-right backdrop-blur">
                                     <p class="text-[10px] font-bold uppercase tracking-widest text-white/70">MTD</p>
-                                    <p class="mt-1 text-3xl font-extrabold" :class="deltaKinerjaCls(card.delta?.mom?.nilai)">{{ formatDelta(card.delta?.mom?.nilai) }}</p>
-                                    <p class="text-sm" :class="deltaKinerjaCls(card.delta?.mom?.nilai)">{{ formatDeltaPct(card.delta?.mom?.persen) }}</p>
+                                    <p class="mt-1 text-3xl font-extrabold" :class="deltaCardCls(card.delta?.mom?.nilai)">{{ formatDelta(card.delta?.mom?.nilai) }}</p>
+                                    <p class="text-sm" :class="deltaCardCls(card.delta?.mom?.nilai)">{{ formatDeltaPct(card.delta?.mom?.persen) }}</p>
                                 </div>
                                 <div class="rounded-2xl bg-white/10 px-5 py-4 text-right backdrop-blur">
                                     <p class="text-[10px] font-bold uppercase tracking-widest text-white/70">YOY</p>
-                                    <p class="mt-1 text-3xl font-extrabold" :class="deltaKinerjaCls(card.delta?.yoy?.nilai)">{{ formatDelta(card.delta?.yoy?.nilai) }}</p>
-                                    <p class="text-sm" :class="deltaKinerjaCls(card.delta?.yoy?.nilai)">{{ formatDeltaPct(card.delta?.yoy?.persen) }}</p>
+                                    <p class="mt-1 text-3xl font-extrabold" :class="deltaCardCls(card.delta?.yoy?.nilai)">{{ formatDelta(card.delta?.yoy?.nilai) }}</p>
+                                    <p class="text-sm" :class="deltaCardCls(card.delta?.yoy?.nilai)">{{ formatDeltaPct(card.delta?.yoy?.persen) }}</p>
                                 </div>
                             </div>
                         </div>
 
-                        <div class="overflow-hidden rounded-[22px] bg-white shadow-sm ring-1 ring-black/5">
-                            <div class="flex items-center justify-between gap-3 px-5 pb-3 pt-4">
-                                <p class="text-sm font-bold uppercase tracking-wide text-slate-700">{{ judulChart(card) }}</p>
-                                <div class="text-xs text-slate-400">
-                                    {{ chartUntuk(String(card.key).toLowerCase())?.tahun_lalu?.tahun }} vs {{ chartUntuk(String(card.key).toLowerCase())?.tahun_ini?.tahun }}
+                        <div class="rounded-[22px] bg-white p-4 shadow-sm ring-1 ring-black/5">
+                            <div class="mb-3 flex items-center justify-between gap-3">
+                                <div>
+                                    <p class="text-sm font-bold uppercase tracking-wide text-slate-700">{{ mode === 'ph' ? 'Total ' : `NET DG ${labelNetDgKualitas} ` }}{{ card.judul }}</p>
+                                    <p class="mt-1 text-xs text-slate-400">
+                                        {{ mode === 'netdg' ? 'Perbandingan posisi' : 'Perbandingan' }}
+                                        {{ chartUntuk(String(card.key).toLowerCase())?.tahun_lalu?.tahun }} vs {{ chartUntuk(String(card.key).toLowerCase())?.tahun_ini?.tahun }}
+                                    </p>
                                 </div>
+                                <div class="text-xs text-slate-400">Periode {{ bulanTahunPanjang(snapshot?.periode) }}</div>
                             </div>
-
-                            <div
-                                v-if="chartUntuk(String(card.key).toLowerCase()) && metrikYoyChart(String(card.key).toLowerCase()).length"
-                                class="overflow-x-auto px-4 pb-2"
-                            >
-                                <div class="min-w-[760px] space-y-px">
-                                    <div class="grid grid-cols-[64px_minmax(0,1fr)] items-stretch gap-0.5">
-                                        <div class="flex items-center text-[9px] font-black uppercase tracking-[0.08em] text-slate-400">YOY AKUM</div>
-                                        <div class="grid gap-px" :style="gridMetrikYoy(String(card.key).toLowerCase())">
-                                            <div
-                                                v-for="metric in metrikYoyChart(String(card.key).toLowerCase())"
-                                                :key="`yoy-akum-${card.key}-${metric.label}`"
-                                                class="rounded-[3px] bg-[#075bc5] px-2 py-1.5 text-center text-[9px] font-black tabular-nums"
-                                                :class="deltaKinerjaGelapCls(metric.yoyAkum)"
-                                            >
-                                                {{ formatDeltaPct(metric.yoyAkum) }}
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div class="grid grid-cols-[64px_minmax(0,1fr)] items-stretch gap-0.5">
-                                        <div class="flex items-center text-[9px] font-black uppercase tracking-[0.08em] text-slate-400">YOY DELTA</div>
-                                        <div class="grid gap-px" :style="gridMetrikYoy(String(card.key).toLowerCase())">
-                                            <div
-                                                v-for="metric in metrikYoyChart(String(card.key).toLowerCase())"
-                                                :key="`yoy-delta-${card.key}-${metric.label}`"
-                                                class="rounded-[3px] border border-[#c7d9ef] bg-[#edf5ff] px-2 py-1.5 text-center text-[9px] font-black tabular-nums"
-                                                :class="deltaKinerjaCls(metric.yoyDelta)"
-                                            >
-                                                {{ formatDeltaPct(metric.yoyDelta) }}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="h-[265px] px-3 pb-3">
+                            <div class="h-[360px]">
                                 <ComboChart
                                     v-if="chartUntuk(String(card.key).toLowerCase())"
                                     :labels="chartUntuk(String(card.key).toLowerCase())?.label ?? []"
@@ -519,16 +533,27 @@ onMounted(async () => {
                             <p class="mt-1 text-xs text-slate-400">Posisi {{ bulanTahunPanjang(branch?.periode) }}</p>
                         </div>
 
-                        <div class="flex flex-wrap items-center gap-2">
-                            <select v-model="drilldown" class="h-10 rounded-xl border-slate-200 text-sm">
-                                <option :value="null">Semua BO</option>
-                                <option v-for="c in opsi.cabang" :key="c.id" :value="c.id">{{ c.nama }}</option>
-                            </select>
-                            <select v-model="scopeTabel" class="h-10 rounded-xl border-slate-200 text-sm">
-                                <option v-for="opt in scopeTabelOptions" :key="opt.key" :value="opt.key">{{ opt.label }}</option>
-                            </select>
+                        <div class="flex flex-wrap items-end gap-2">
+                            <label class="min-w-[220px]">
+                                <span class="mb-1 block text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-400">Cabang</span>
+                                <select v-model="drilldown" class="h-10 w-full rounded-xl border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 shadow-sm focus:border-blue-400 focus:ring-blue-400">
+                                    <option :value="null">Semua Cabang</option>
+                                    <option v-for="c in opsi.cabang" :key="c.id" :value="c.id">{{ c.nama }}</option>
+                                </select>
+                            </label>
+                            <label class="min-w-[170px]">
+                                <span class="mb-1 block text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-400">Segmentasi</span>
+                                <select v-model="scopeTabel" class="h-10 w-full rounded-xl border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 shadow-sm focus:border-blue-400 focus:ring-blue-400">
+                                    <option v-for="opt in scopeTabelOptions" :key="opt.key" :value="opt.key">{{ opt.label }}</option>
+                                </select>
+                            </label>
+                            <button type="button" class="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:opacity-45" :disabled="!drilldown" @click="resetFilterTabel">
+                                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+                                Reset
+                            </button>
                         </div>
                     </div>
+                    <div class="h-[3px] w-full bg-[linear-gradient(90deg,#2E7BFF_0%,#34C2FF_22%,#34D399_48%,#F5B940_68%,#E879F9_84%,#C084FC_100%)]"></div>
 
                     <div class="overflow-x-auto">
                         <table class="min-w-full text-sm">
@@ -536,7 +561,7 @@ onMounted(async () => {
                                 <tr>
                                     <th class="px-4 py-3 text-center text-[11px] font-bold uppercase tracking-wider">#</th>
                                     <th class="cursor-pointer px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider" @click="sort.urutkanKolom('nama')">
-                                        Nama Cabang
+                                        Nama {{ branch.grouping === 'uker' ? 'Unit Kerja' : 'Cabang' }}
                                         <SortArrow :arah="sort.arahUntuk('nama')" />
                                     </th>
                                     <th class="cursor-pointer px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wider" @click="sort.urutkanKolom('periode_lalu')">
@@ -551,8 +576,8 @@ onMounted(async () => {
                                         {{ bulanPendek(branch?.periode) }}
                                         <SortArrow :arah="sort.arahUntuk('nilai')" />
                                     </th>
-                                    <th class="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wider" :title="`Gap terhadap ${bulanPendek(branch?.bulan_sebelumnya)}`">MTD</th>
-                                    <th class="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wider" :title="`Gap terhadap ${bulanPendek(branch?.periode_lalu)}`">YOY</th>
+                                    <th class="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wider">MTD</th>
+                                    <th class="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wider">YOY</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -560,18 +585,19 @@ onMounted(async () => {
                                     <td class="px-4 py-3 text-center text-slate-400">{{ index + 1 }}</td>
                                     <td class="px-4 py-3">
                                         <p class="font-semibold text-slate-800">{{ row.nama }}</p>
-                                        <p v-if="row.area_nama" class="text-xs text-slate-400">{{ row.area_nama }}</p>
+                                        <p v-if="branch.grouping === 'uker' && row.cabang_nama" class="mt-0.5 text-[10px] font-semibold text-slate-500">Cabang: {{ row.cabang_nama }}</p>
+                                        <p v-if="row.area_nama" class="mt-0.5 text-[10px] font-semibold text-blue-500">Area Head: {{ row.area_nama }}</p>
                                     </td>
                                     <td class="px-4 py-3 text-right text-slate-500">{{ formatAngka(row.periode_lalu) }}</td>
                                     <td class="px-4 py-3 text-right text-slate-500">{{ formatAngka(row.desember_lalu) }}</td>
                                     <td class="px-4 py-3 text-right font-bold text-slate-800">{{ formatAngka(row.nilai) }}</td>
                                     <td class="px-4 py-3 text-right">
-                                        <p class="font-semibold" :class="deltaKinerjaCls(row.mtd?.nilai)">{{ formatDelta(row.mtd?.nilai) }}</p>
-                                        <p class="text-xs" :class="deltaKinerjaCls(row.mtd?.nilai)">{{ formatDeltaPct(row.mtd?.persen) }}</p>
+                                        <p class="font-semibold" :class="deltaCls(row.mtd?.nilai)">{{ formatDelta(row.mtd?.nilai) }}</p>
+                                        <p class="text-xs" :class="deltaCls(row.mtd?.nilai)">{{ formatDeltaPct(row.mtd?.persen) }}</p>
                                     </td>
                                     <td class="px-4 py-3 text-right">
-                                        <p class="font-semibold" :class="deltaKinerjaCls(row.yoy?.nilai)">{{ formatDelta(row.yoy?.nilai) }}</p>
-                                        <p class="text-xs" :class="deltaKinerjaCls(row.yoy?.nilai)">{{ formatDeltaPct(row.yoy?.persen) }}</p>
+                                        <p class="font-semibold" :class="deltaCls(row.yoy?.nilai)">{{ formatDelta(row.yoy?.nilai) }}</p>
+                                        <p class="text-xs" :class="deltaCls(row.yoy?.nilai)">{{ formatDeltaPct(row.yoy?.persen) }}</p>
                                     </td>
                                 </tr>
                                 <tr v-if="!barisTerurut.length">

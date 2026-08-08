@@ -45,12 +45,12 @@ const chart = ref(null);
 const branch = ref({ grouping: 'cabang', baris: [] });
 const memuat = reactive({ kartu: false, chart: false, tabel: false });
 const rankingFilter = reactive({
-    area_id: null,
+    cabang_id: null,
     segmentasi: null,
     produk: null,
 });
 
-const sort = useTableSort('nilai', 'desc');
+const sort = useTableSort('pencapaian', 'desc');
 
 // --- Snapshot per kartu --------------------------------------------------
 const kartuByKey = computed(() => {
@@ -225,7 +225,7 @@ async function resetFilter() {
     });
     Object.assign(applied, pending);
     Object.assign(rankingFilter, {
-        area_id: null,
+        cabang_id: null,
         segmentasi: null,
         produk: null,
     });
@@ -236,7 +236,7 @@ async function resetFilter() {
 
 async function resetRankingFilter() {
     Object.assign(rankingFilter, {
-        area_id: null,
+        cabang_id: null,
         segmentasi: null,
         produk: null,
     });
@@ -278,10 +278,10 @@ async function muatTabel() {
     try {
         branch.value = await fetchBranchPencapaian({
             tanggal: applied.tanggal,
-            area_id: rankingFilter.area_id,
-            cabang_id: null,
-            uker_id: null,
-            segmentasi: rankingFilter.segmentasi,
+            area_id: applied.area_id,
+            cabang_id: rankingFilter.cabang_id ?? applied.cabang_id,
+            uker_id: rankingFilter.cabang_id ? null : applied.uker_id,
+            segmentasi: rankingFilter.segmentasi ?? applied.segmentasi,
             produk: rankingFilter.produk,
         });
     } finally {
@@ -292,6 +292,7 @@ const muatSemua = () => Promise.all([muatKartu(), muatChart(), muatTabel()]);
 
 async function terapkan() {
     Object.assign(applied, pending);
+    rankingFilter.cabang_id = null;
     await muatOpsi();
     await muatSemua();
 }
@@ -313,7 +314,7 @@ watch(
     },
 );
 watch(
-    () => [rankingFilter.area_id, rankingFilter.segmentasi, rankingFilter.produk],
+    () => [rankingFilter.cabang_id, rankingFilter.segmentasi, rankingFilter.produk],
     () => muatTabel(),
 );
 
@@ -612,11 +613,11 @@ onMounted(async () => {
                         <p class="mt-0.5 text-[10px] text-slate-400">Posisi {{ tanggalPanjang(branch?.tanggal) }}</p>
                     </div>
                     <div class="flex flex-wrap items-end gap-2">
-                        <label v-if="scope.bolehPilihArea.value" class="block">
-                            <span class="mini-filter-label">Area Head</span>
-                            <select v-model="rankingFilter.area_id" class="mini-filter-control">
-                                <option :value="null">Semua Area Head</option>
-                                <option v-for="a in opsi.area" :key="a.id" :value="a.id">{{ a.nama }}</option>
+                        <label class="block">
+                            <span class="mini-filter-label">Cabang</span>
+                            <select v-model="rankingFilter.cabang_id" class="mini-filter-control">
+                                <option :value="null">Semua Cabang</option>
+                                <option v-for="c in opsi.cabang" :key="c.id" :value="c.id">{{ c.nama }}</option>
                             </select>
                         </label>
                         <label class="block">
@@ -648,6 +649,7 @@ onMounted(async () => {
                         </button>
                     </div>
                 </div>
+                <div class="h-[3px] w-full bg-[linear-gradient(90deg,#2E7BFF_0%,#34C2FF_22%,#34D399_48%,#F5B940_68%,#E879F9_84%,#C084FC_100%)]"></div>
 
                 <div class="overflow-x-auto">
                     <table class="min-w-[1120px] w-full text-[10px]">
@@ -668,7 +670,7 @@ onMounted(async () => {
                                     ]"
                                     @click="sort.urutkanKolom(k.key)"
                                 >
-                                    {{ k.label }} <SortArrow :arah="sort.arahUntuk(k.key)" />
+                                    {{ k.key === 'nama' ? `Nama ${branch.grouping === 'uker' ? 'Unit Kerja' : 'Cabang'}` : k.label }} <SortArrow :arah="sort.arahUntuk(k.key)" />
                                 </th>
                                 <th v-for="d in DELTA" :key="d.key" class="border-t-2 border-fuchsia-300 px-3 py-2 text-right font-semibold">
                                     {{ d.label }}
@@ -680,7 +682,8 @@ onMounted(async () => {
                                 <td class="px-3 py-2 text-center text-slate-400">{{ i + 1 }}</td>
                                 <td class="px-3 py-2">
                                     <p class="font-bold text-slate-700">{{ b.nama }}</p>
-                                    <p class="mt-1 text-[9px] font-semibold text-blue-600">
+                                    <p v-if="branch.grouping === 'uker' && b.cabang_nama" class="mt-1 text-[9px] font-semibold text-slate-500">Cabang: {{ b.cabang_nama }}</p>
+                                    <p class="mt-0.5 text-[9px] font-semibold text-blue-600">
                                         Area Head: {{ b.area_nama ?? 'Belum terpetakan' }}
                                     </p>
                                 </td>

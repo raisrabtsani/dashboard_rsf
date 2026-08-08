@@ -318,7 +318,7 @@ class LabaService
             ? Uker::query()->with('cabang.area')->whereIn('id', $ids)->get()->keyBy('id')
             : Cabang::query()->with('area')->whereIn('id', $ids)->get()->keyBy('id');
 
-        $baris = $ids->map(function ($entitasId) use ($aktual, $bulanLalu, $tahunLalu, $desemberTahunLalu, $target, $entitas, $bulan) {
+        $baris = $ids->map(function ($entitasId) use ($aktual, $bulanLalu, $tahunLalu, $desemberTahunLalu, $target, $entitas, $bulan, $perUker) {
             $nilai = (float) ($aktual[$entitasId] ?? 0);
             $rka = (float) ($target[$entitasId] ?? 0);
             $prev = $bulan === 1 ? 0.0 : (isset($bulanLalu[$entitasId]) ? (float) $bulanLalu[$entitasId] : null);
@@ -329,6 +329,7 @@ class LabaService
             return [
                 'id' => (int) $entitasId,
                 'nama' => $model?->nama ?? (string) $entitasId,
+                'cabang_nama' => $perUker ? $model?->cabang?->nama : null,
                 'area_nama' => $model?->area?->nama ?? $model?->cabang?->area?->nama,
                 'posisi_bulan_lalu' => $yoyBase === null ? null : Satuan::toJuta($yoyBase),
                 'posisi_desember_lalu' => $ytdBase === null ? null : Satuan::toJuta($ytdBase),

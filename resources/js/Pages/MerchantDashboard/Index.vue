@@ -57,9 +57,9 @@ const branch = ref({
     inverse: false,
 });
 const drilldown = ref(null);
-const filterAreaHeadTabel = ref('');
+const filterCabangTabel = ref(null);
 const memuat = reactive({ kartu: false, chart: false, tabel: false });
-const sort = useTableSort('nilai', 'desc');
+const sort = useTableSort('pencapaian', 'desc');
 
 const kartuSemua = computed(() => snapshot.value?.kartu ?? []);
 const kartuCompact = computed(() => {
@@ -72,21 +72,7 @@ const kartuLebar = computed(() => {
     return kartuSemua.value.filter((k) => !compact.has(k.kode));
 });
 const selectedMeta = computed(() => kpiMeta.value.find((k) => k.kode === selectedKpi.value) ?? null);
-const opsiAreaHeadTabel = computed(() => {
-    const nama = (branch.value.baris ?? [])
-        .map((row) => String(row.area_nama ?? '').trim())
-        .filter(Boolean);
-
-    return [...new Set(nama)].sort((a, b) => a.localeCompare(b, 'id'));
-});
-const barisTerurut = computed(() => {
-    const rows = (branch.value.baris ?? []).filter((row) => {
-        if (!filterAreaHeadTabel.value) return true;
-        return String(row.area_nama ?? '').trim() === filterAreaHeadTabel.value;
-    });
-
-    return sort.urutkan(rows);
-});
+const barisTerurut = computed(() => sort.urutkan(branch.value.baris ?? []));
 
 const NAMA_BULAN = [
     'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -152,7 +138,7 @@ function formatChart(kode) {
 const KOLOM = computed(() => {
     const hasil = [
         { key: 'nomor', label: '#', kelas: 'text-center w-12', sortable: false },
-        { key: 'nama', label: 'Nama', kelas: 'text-left min-w-[260px]', sortable: true },
+        { key: 'nama', label: `Nama ${branch.value.grouping === 'uker' ? 'Unit Kerja' : 'Cabang'}`, kelas: 'text-left min-w-[260px]', sortable: true },
         { key: 'nilai', label: selectedMeta.value?.label ?? 'Actual', kelas: 'text-right min-w-[110px]', sortable: true },
     ];
 
@@ -229,8 +215,11 @@ async function muatTabel() {
         branch.value = await api.value.fetchBranchPencapaian({
             ...applied,
             kpi: selectedKpi.value,
-            cabang_id: drilldown.value ?? applied.cabang_id,
+            cabang_id: filterCabangTabel.value ?? drilldown.value ?? applied.cabang_id,
+            uker_id: filterCabangTabel.value ? null : applied.uker_id,
         });
+        sort.kolom.value = branch.value.punya_target ? 'pencapaian' : 'nilai';
+        sort.arah.value = 'desc';
     } finally {
         memuat.tabel = false;
     }
@@ -245,7 +234,7 @@ async function terapkan() {
 
     Object.assign(applied, pending);
     drilldown.value = null;
-    filterAreaHeadTabel.value = '';
+    filterCabangTabel.value = null;
     await muatSemua();
 }
 
@@ -257,21 +246,18 @@ async function resetFilter() {
 
     Object.assign(applied, pending);
     drilldown.value = null;
-    filterAreaHeadTabel.value = '';
+    filterCabangTabel.value = null;
 
     await muatOpsi();
     await muatSemua();
 }
 
-function resetFilterTabel() {
-    filterAreaHeadTabel.value = '';
-}
 
 async function gantiToggle(key) {
     if (toggle.value === key) return;
     toggle.value = key;
     drilldown.value = null;
-    filterAreaHeadTabel.value = '';
+    filterCabangTabel.value = null;
     snapshot.value = null;
     Object.keys(charts).forEach((kode) => delete charts[kode]);
     await muatOpsi();
@@ -280,6 +266,7 @@ async function gantiToggle(key) {
 
 watch(selectedKpi, () => muatTabel());
 watch(drilldown, () => muatTabel());
+watch(filterCabangTabel, () => muatTabel());
 watch(
     () => pending.area_id,
     async (areaId) => {
@@ -514,14 +501,14 @@ onMounted(async () => {
 
                         <div class="flex flex-wrap items-end gap-2">
                             <label class="min-w-[220px]">
-                                <span class="mb-1 block text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-400">Area Head</span>
+                                <span class="mb-1 block text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-400">Cabang</span>
                                 <div class="relative">
                                     <select
-                                        v-model="filterAreaHeadTabel"
+                                        v-model="filterCabangTabel"
                                         class="h-10 w-full appearance-none rounded-xl border-slate-200 bg-white pl-3 pr-9 text-xs font-bold text-slate-700 shadow-sm focus:border-blue-400 focus:ring-blue-400"
                                     >
-                                        <option value="">Semua Area Head</option>
-                                        <option v-for="nama in opsiAreaHeadTabel" :key="nama" :value="nama">{{ nama }}</option>
+                                        <option :value="null">Semua Cabang</option>
+                                        <option v-for="c in opsi.cabang" :key="c.id" :value="c.id">{{ c.nama }}</option>
                                     </select>
                                     <svg class="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
                                         <path d="m6 8 4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
@@ -544,16 +531,8 @@ onMounted(async () => {
                                 </div>
                             </label>
 
-                            <button
-                                type="button"
-                                class="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:cursor-default disabled:opacity-45"
-                                :disabled="!filterAreaHeadTabel"
-                                @click="resetFilterTabel"
-                            >
-                                <svg class="h-4 w-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
-                                    <path d="M3 3v5h5" />
-                                </svg>
+                            <button type="button" class="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:opacity-45" :disabled="!filterCabangTabel" @click="filterCabangTabel = null">
+                                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
                                 Reset
                             </button>
                         </div>
@@ -582,6 +561,7 @@ onMounted(async () => {
                                     <td class="px-3 py-2.5 text-center font-semibold text-slate-400">{{ index + 1 }}</td>
                                     <td class="px-3 py-2.5">
                                         <p class="font-extrabold text-slate-700">{{ b.nama }}</p>
+                                        <p v-if="branch.grouping === 'uker' && b.cabang_nama" class="mt-0.5 text-[9px] font-semibold text-slate-500">Cabang: {{ b.cabang_nama }}</p>
                                         <p v-if="b.area_nama" class="mt-0.5 text-[9px] font-semibold text-blue-500">Area Head: {{ b.area_nama }}</p>
                                     </td>
                                     <td class="px-3 py-2.5 text-right font-black tabular-nums text-slate-800">{{ fmtBranchNilai(b.nilai) }}</td>

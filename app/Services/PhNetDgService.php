@@ -21,23 +21,14 @@ use Illuminate\Support\Carbon;
  * Flow bulanan hapus buku, dibaca langsung dari tabel `ph`.
  *
  * ── NET DG ────────────────────────────────────────────────────────────────
- * Dihitung on-the-fly dari posisi SML/NPL akhir bulan di tabel `pinjaman`
- * ditambah PH bulan itu. Rumusnya:
+ * Dihitung on-the-fly dari posisi akhir bulan di tabel `pinjaman` ditambah
+ * PH pada bulan yang sama. Filter SML/NPL berfungsi sebagai pemisah kualitas:
  *
- *     NetDG_NPL(N) = NPL(N) − NPL(N−1) + PH(N)
- *     NetDG_SML(N) = SML(N) − SML(N−1) + NetDG_NPL(N)
+ *     NetDG_SML(N) = Posisi SML akhir bulan N + PH(N)
+ *     NetDG_NPL(N) = Posisi NPL akhir bulan N + PH(N)
  *
- * Yang DITAMPILKAN adalah NetDG_SML. Substitusi memberi bentuk teleskopik:
- *
- *     NetDG_SML(N) = Δ(SML+NPL)(N) + PH(N)
- *
- * sehingga akumulasi Januari..M runtuh jadi:
- *
- *     Akum(M) = (SML+NPL)(M) − (SML+NPL)(Des tahun lalu) + Σ PH
- *
- * KONSEKUENSI DATA: deret tahun X membutuhkan posisi pinjaman akhir Desember
- * X−1. Selama posisi itu belum diunggah, Januari X (dan karena itu seluruh
- * akumulasinya) bernilai NULL — bukan 0.
+ * SML tidak mencampurkan NPL, dan NPL tidak mencampurkan SML. Mode default
+ * adalah SML. Bulan tanpa posisi pinjaman tetap bernilai NULL — bukan 0.
  *
  * PH & Net DG TIDAK punya RKA: tidak ada target, pencapaian, maupun gap.
  */
@@ -49,8 +40,15 @@ class PhNetDgService
 
     public const MODE_NETDG = 'netdg';
 
+    public const NETDG_SML = 'sml';
+
+    public const NETDG_NPL = 'npl';
+
     /** @var list<string> */
     public const MODE = [self::MODE_PH, self::MODE_NETDG];
+
+    /** @var list<string> */
+    public const NETDG_KUALITAS = [self::NETDG_SML, self::NETDG_NPL];
 
     /**
      * Rollup Region Office DIIKUTKAN dalam kalkulasi.
@@ -145,13 +143,14 @@ class PhNetDgService
      *
      * @return array<string, mixed>
      */
-    public function snapshot(string $mode, string $periode, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+    public function snapshot(string $mode, string $periode, ?int $areaId, ?int $cabangId, ?int $ukerId, string $netDgKualitas = self::NETDG_SML): array
     {
         $posisi = Carbon::parse($periode)->endOfMonth();
         $bulan = (int) $posisi->month;
 
-        $tahunIni = $this->deret($mode, (int) $posisi->year, $areaId, $cabangId, $ukerId);
-        $tahunLalu = $this->deret($mode, (int) $posisi->year - 1, $areaId, $cabangId, $ukerId);
+        $netDgKualitas = $this->normalisasiKualitasNetDg($netDgKualitas);
+        $tahunIni = $this->deret($mode, (int) $posisi->year, $areaId, $cabangId, $ukerId, $netDgKualitas);
+        $tahunLalu = $this->deret($mode, (int) $posisi->year - 1, $areaId, $cabangId, $ukerId, $netDgKualitas);
 
         $kartu = [];
 
@@ -167,8 +166,12 @@ class PhNetDgService
                 'key' => $s['key'],
                 'judul' => $s['judul'],
                 'nilai' => $nilai,
-                'akumulasi' => $ini['akumulasi'][$bulan - 1],
-                'akumulasi_tahun_lalu' => $lalu['akumulasi'][$bulan - 1],
+                // PH adalah flow sehingga kartu memakai akumulasi YTD.
+                // NET DG adalah posisi akhir bulan, sehingga TIDAK boleh dijumlahkan
+                // antarbulan. Menjumlah posisi Jan..Jul menyebabkan angka membengkak
+                // (misalnya 23 T) walaupun posisi Juli hanya beberapa triliun.
+                'akumulasi' => $mode === self::MODE_NETDG ? $nilai : $ini['akumulasi'][$bulan - 1],
+                'akumulasi_tahun_lalu' => $mode === self::MODE_NETDG ? $nilaiLalu : $lalu['akumulasi'][$bulan - 1],
                 'delta' => [
                     'mom' => $this->selisih($nilai, $sebelumnya),
                     'yoy' => $this->selisih($nilai, $nilaiLalu),
@@ -178,6 +181,7 @@ class PhNetDgService
 
         return [
             'mode' => $mode,
+            'netdg_kualitas' => $mode === self::MODE_NETDG ? $netDgKualitas : null,
             'periode' => $posisi->toDateString(),
             'bulan' => $bulan,
             'tahun' => (int) $posisi->year,
@@ -197,37 +201,49 @@ class PhNetDgService
      *
      * @return array<string, mixed>
      */
-    public function chart(string $mode, string $periode, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+    public function chart(string $mode, string $periode, ?int $areaId, ?int $cabangId, ?int $ukerId, string $netDgKualitas = self::NETDG_SML): array
     {
         $posisi = Carbon::parse($periode)->endOfMonth();
         $bulan = (int) $posisi->month;
         $tahun = (int) $posisi->year;
 
-        $ini = $this->deret($mode, $tahun, $areaId, $cabangId, $ukerId);
-        $lalu = $this->deret($mode, $tahun - 1, $areaId, $cabangId, $ukerId);
+        $netDgKualitas = $this->normalisasiKualitasNetDg($netDgKualitas);
+        $ini = $this->deret($mode, $tahun, $areaId, $cabangId, $ukerId, $netDgKualitas);
+        $lalu = $this->deret($mode, $tahun - 1, $areaId, $cabangId, $ukerId, $netDgKualitas);
 
         $potong = fn (array $n) => array_slice($n, 0, $bulan);
 
         $seri = [];
 
         foreach (self::scope() as $s) {
+            $bulananLalu = $potong($lalu[$s['key']]['bulanan']);
+            $bulananIni = $potong($ini[$s['key']]['bulanan']);
+
             $seri[$s['key']] = [
                 'judul' => $s['judul'],
                 'label' => array_map(fn (int $b) => Bulan::PENDEK[$b], range(1, $bulan)),
                 'tahun_lalu' => [
                     'tahun' => $tahun - 1,
-                    'bulanan' => $potong($lalu[$s['key']]['bulanan']),
-                    'akumulasi' => $potong($lalu[$s['key']]['akumulasi']),
+                    // PH: batang = flow bulanan, garis = akumulasi.
+                    // NET DG: batang = perubahan bulanan, garis = posisi akhir bulan.
+                    'bulanan' => $mode === self::MODE_NETDG ? $this->perubahanBulanan($bulananLalu) : $bulananLalu,
+                    'akumulasi' => $mode === self::MODE_NETDG ? $bulananLalu : $potong($lalu[$s['key']]['akumulasi']),
                 ],
                 'tahun_ini' => [
                     'tahun' => $tahun,
-                    'bulanan' => $potong($ini[$s['key']]['bulanan']),
-                    'akumulasi' => $potong($ini[$s['key']]['akumulasi']),
+                    'bulanan' => $mode === self::MODE_NETDG ? $this->perubahanBulanan($bulananIni) : $bulananIni,
+                    'akumulasi' => $mode === self::MODE_NETDG ? $bulananIni : $potong($ini[$s['key']]['akumulasi']),
                 ],
             ];
         }
 
-        return ['mode' => $mode, 'tahun' => $tahun, 'bulan' => $bulan, 'seri' => $seri];
+        return [
+            'mode' => $mode,
+            'netdg_kualitas' => $mode === self::MODE_NETDG ? $netDgKualitas : null,
+            'tahun' => $tahun,
+            'bulan' => $bulan,
+            'seri' => $seri,
+        ];
     }
 
 
@@ -236,12 +252,13 @@ class PhNetDgService
      *
      * @return array<string, mixed>
      */
-    public function branchPencapaian(string $mode, string $periode, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $scope = null): array
+    public function branchPencapaian(string $mode, string $periode, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $scope = null, string $netDgKualitas = self::NETDG_SML): array
     {
         $posisi = Carbon::parse($periode)->endOfMonth();
         $perUker = $cabangId !== null;
         $kolom = $perUker ? 'uker_id' : 'cabang_id';
         $segmen = $this->scopeToSegmen($scope);
+        $netDgKualitas = $this->normalisasiKualitasNetDg($netDgKualitas);
 
         $bulanLalu = $posisi->copy()->subMonthNoOverflow()->endOfMonth();
         $tahunLalu = $posisi->copy()->subYear()->endOfMonth();
@@ -249,7 +266,7 @@ class PhNetDgService
 
         $ambil = fn (Carbon $p) => $mode === self::MODE_PH
             ? $this->nilaiPhPerEntitas($p, $kolom, $areaId, $cabangId, $ukerId, $segmen)
-            : $this->nilaiNetDgPerEntitas($p, $kolom, $areaId, $cabangId, $ukerId, $segmen);
+            : $this->nilaiNetDgPerEntitas($p, $kolom, $areaId, $cabangId, $ukerId, $segmen, $netDgKualitas);
 
         $aktual = $ambil($posisi);
         $periodeLalu = $ambil($tahunLalu);
@@ -263,7 +280,8 @@ class PhNetDgService
 
         $baris = $aktual->map(function ($nilai, $entitasId) use ($periodeLalu, $desember, $mtdBasis, $entitas, $perUker) {
             $kantor = $entitas->get($entitasId);
-            $area = $perUker ? $kantor?->cabang?->area : $kantor?->area;
+            $cabang = $perUker ? $kantor?->cabang : $kantor;
+            $area = $cabang?->area;
             $aktualNilai = $nilai === null ? null : (float) $nilai;
             $laluNilai = $periodeLalu->has($entitasId) ? $periodeLalu[$entitasId] : null;
             $desNilai = $desember->has($entitasId) ? $desember[$entitasId] : null;
@@ -272,6 +290,7 @@ class PhNetDgService
             return [
                 'id' => (int) $entitasId,
                 'nama' => $kantor?->nama ?? (string) $entitasId,
+                'cabang_nama' => $perUker ? $cabang?->nama : null,
                 'area_nama' => $area?->nama,
                 'periode_lalu' => $laluNilai,
                 'desember_lalu' => $desNilai,
@@ -283,6 +302,7 @@ class PhNetDgService
 
         return [
             'mode' => $mode,
+            'netdg_kualitas' => $mode === self::MODE_NETDG ? $netDgKualitas : null,
             'periode' => $posisi->toDateString(),
             'periode_lalu' => $tahunLalu->toDateString(),
             'desember_lalu' => $desemberLalu->toDateString(),
@@ -297,11 +317,11 @@ class PhNetDgService
      *
      * @return array<string, array{bulanan: list<float|null>, akumulasi: list<float|null>}>
      */
-    public function deret(string $mode, int $tahun, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+    public function deret(string $mode, int $tahun, ?int $areaId, ?int $cabangId, ?int $ukerId, string $netDgKualitas = self::NETDG_SML): array
     {
         return $mode === self::MODE_PH
             ? $this->deretPh($tahun, $areaId, $cabangId, $ukerId)
-            : $this->deretNetDg($tahun, $areaId, $cabangId, $ukerId);
+            : $this->deretNetDg($tahun, $areaId, $cabangId, $ukerId, $this->normalisasiKualitasNetDg($netDgKualitas));
     }
 
     /**
@@ -338,14 +358,14 @@ class PhNetDgService
     }
 
     /**
-     * NET DG: dihitung dari posisi SML/NPL akhir bulan + PH bulan itu.
+     * NET DG: posisi kualitas terpilih pada akhir bulan + PH bulan itu.
      *
      * @return array<string, array{bulanan: list<float|null>, akumulasi: list<float|null>}>
      */
-    private function deretNetDg(int $tahun, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+    private function deretNetDg(int $tahun, ?int $areaId, ?int $cabangId, ?int $ukerId, string $netDgKualitas): array
     {
-        // Butuh 13 posisi: Des (tahun-1) sampai Des (tahun).
-        $posisi = $this->posisiSmlNplAkhirBulan($tahun, $areaId, $cabangId, $ukerId);
+        // Butuh 12 posisi akhir bulan: Januari sampai Desember tahun berjalan.
+        $posisi = $this->posisiSmlNplAkhirBulan($tahun, $areaId, $cabangId, $ukerId, $netDgKualitas);
         $ph = $this->phPerBulanSegmen($tahun, $areaId, $cabangId, $ukerId);
 
         $hasil = [];
@@ -355,11 +375,9 @@ class PhNetDgService
 
             for ($b = 1; $b <= 12; $b++) {
                 $sekarang = $this->smlNpl($posisi, $b, $s['segmen']);
-                $sebelum = $this->smlNpl($posisi, $b - 1, $s['segmen']);
 
-                // Tanpa posisi bulan ini ATAU bulan sebelumnya, Net DG tidak
-                // terdefinisi. Untuk Januari, "bulan sebelumnya" = Des tahun lalu.
-                if ($sekarang === null || $sebelum === null) {
+                // Posisi kualitas terpilih wajib tersedia pada bulan itu.
+                if ($sekarang === null) {
                     $bulanan[] = null;
 
                     continue;
@@ -370,15 +388,41 @@ class PhNetDgService
                     ? 0.0
                     : ($s['segmen'] === null ? array_sum($phBulan) : ($phBulan[$s['segmen']] ?? 0.0));
 
-                // NetDG_SML = Δ(SML+NPL) + PH — bentuk teleskopik dari rumus
-                // dua langkah di docblock kelas.
-                $bulanan[] = Satuan::toJuta($sekarang - $sebelum + $phNilai);
+                // Filter adalah pemisah kualitas, bukan penggabung:
+                // SML = posisi SML akhir bulan + PH bulan yang sama.
+                // NPL = posisi NPL akhir bulan + PH bulan yang sama.
+                $bulanan[] = Satuan::toJuta($sekarang + $phNilai);
             }
 
             $hasil[$s['key']] = [
                 'bulanan' => $bulanan,
-                'akumulasi' => $this->akumulasi($bulanan),
+                // NET DG merupakan posisi/saldo akhir bulan, bukan flow.
+                // Karena itu seri posisi tidak boleh diakumulasi antarbulan.
+                'akumulasi' => $bulanan,
             ];
+        }
+
+        return $hasil;
+    }
+
+    /**
+     * Perubahan posisi bulan ke bulan untuk batang pada chart NET DG.
+     * Bulan pertama bernilai null karena basis Desember tahun sebelumnya tidak
+     * berada di dalam deret tahun yang sama.
+     *
+     * @param  list<float|null>  $posisi
+     * @return list<float|null>
+     */
+    private function perubahanBulanan(array $posisi): array
+    {
+        $hasil = [];
+        $sebelumnya = null;
+
+        foreach ($posisi as $indeks => $nilai) {
+            $hasil[] = $indeks === 0 || $nilai === null || $sebelumnya === null
+                ? null
+                : round($nilai - $sebelumnya, 6);
+            $sebelumnya = $nilai;
         }
 
         return $hasil;
@@ -446,21 +490,24 @@ class PhNetDgService
     }
 
     /**
-     * Posisi (SML+NPL) akhir bulan, per segmen kanonik.
+     * Posisi basis Net DG akhir bulan, per segmen kanonik.
      *
-     * Indeks 0 = Desember tahun sebelumnya, 1..12 = Jan..Des tahun berjalan.
+     * Indeks 1..12 = Januari..Desember tahun berjalan.
      * Nilai null berarti posisinya belum ada di tabel `pinjaman`.
      *
      * @return array<int, array<string, float>|null>
      */
-    private function posisiSmlNplAkhirBulan(int $tahun, ?int $areaId, ?int $cabangId, ?int $ukerId): array
+    private function posisiSmlNplAkhirBulan(int $tahun, ?int $areaId, ?int $cabangId, ?int $ukerId, string $netDgKualitas): array
     {
-        $awal = Carbon::create($tahun - 1, 12, 1)->startOfMonth();
+        $awal = Carbon::create($tahun, 1, 1)->startOfMonth();
         $akhir = Carbon::create($tahun, 12, 31)->endOfMonth();
 
         // Tanggal tersedia dalam rentang, dikelompokkan per bulan di PHP.
-        $tanggal = $this->filterOrganisasi(Pinjaman::query(), $areaId, $cabangId, $ukerId)
-            ->whereBetween('tanggal', [$awal->toDateString(), $akhir->toDateString()])
+        $tanggalQuery = $this->filterOrganisasi(Pinjaman::query(), $areaId, $cabangId, $ukerId)
+            ->whereBetween('tanggal', [$awal->toDateString(), $akhir->toDateString()]);
+        $this->terapkanKualitasNetDg($tanggalQuery, $netDgKualitas);
+
+        $tanggal = $tanggalQuery
             ->distinct()
             ->orderBy('tanggal')
             ->pluck('tanggal');
@@ -478,12 +525,14 @@ class PhNetDgService
         }
 
         if ($akhirBulan === []) {
-            return array_fill(0, 13, null);
+            return array_fill(1, 12, null);
         }
 
-        $saldo = $this->filterOrganisasi(Pinjaman::query(), $areaId, $cabangId, $ukerId)
-            ->whereIn('tanggal', array_values($akhirBulan))
-            ->whereIn('kualitas', [Pinjaman::KUALITAS_SML, Pinjaman::KUALITAS_NPL])
+        $saldoQuery = $this->filterOrganisasi(Pinjaman::query(), $areaId, $cabangId, $ukerId)
+            ->whereIn('tanggal', array_values($akhirBulan));
+        $this->terapkanKualitasNetDg($saldoQuery, $netDgKualitas);
+
+        $saldo = $saldoQuery
             ->groupBy('tanggal', 'segmen')
             ->selectRaw('tanggal, segmen, SUM(baki_debet) as total')
             ->get()
@@ -491,11 +540,8 @@ class PhNetDgService
 
         $hasil = [];
 
-        for ($i = 0; $i <= 12; $i++) {
-            $bulan = $i === 0
-                ? Carbon::create($tahun - 1, 12, 1)
-                : Carbon::create($tahun, $i, 1);
-
+        for ($i = 1; $i <= 12; $i++) {
+            $bulan = Carbon::create($tahun, $i, 1);
             $kunci = $bulan->format('Y-m');
             $tgl = $akhirBulan[$kunci] ?? null;
 
@@ -519,7 +565,7 @@ class PhNetDgService
     }
 
     /**
-     * (SML+NPL) pada indeks bulan tertentu untuk satu scope.
+     * Posisi basis Net DG pada indeks bulan tertentu untuk satu scope.
      *
      * @param  array<int, array<string, float>|null>  $posisi
      */
@@ -557,40 +603,40 @@ class PhNetDgService
     /**
      * @return \Illuminate\Support\Collection<int|string, float>
      */
-    private function nilaiNetDgPerEntitas(Carbon $periode, string $kolom, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $segmen): \Illuminate\Support\Collection
+    private function nilaiNetDgPerEntitas(Carbon $periode, string $kolom, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $segmen, string $netDgKualitas): \Illuminate\Support\Collection
     {
-        $akhirKini = $this->tanggalPosisiPinjamanAkhirBulan($periode, $areaId, $cabangId, $ukerId);
-        $akhirLalu = $this->tanggalPosisiPinjamanAkhirBulan($periode->copy()->subMonthNoOverflow()->endOfMonth(), $areaId, $cabangId, $ukerId);
+        $akhirKini = $this->tanggalPosisiPinjamanAkhirBulan($periode, $areaId, $cabangId, $ukerId, $netDgKualitas);
 
-        if ($akhirKini === null || $akhirLalu === null) {
+        if ($akhirKini === null) {
             return collect();
         }
 
-        $posisiKini = $this->posisiSmlNplPerEntitas($akhirKini, $kolom, $areaId, $cabangId, $ukerId, $segmen);
-        $posisiLalu = $this->posisiSmlNplPerEntitas($akhirLalu, $kolom, $areaId, $cabangId, $ukerId, $segmen);
+        $posisiKini = $this->posisiSmlNplPerEntitas($akhirKini, $kolom, $areaId, $cabangId, $ukerId, $segmen, $netDgKualitas);
         $ph = $this->nilaiPhPerEntitas($periode, $kolom, $areaId, $cabangId, $ukerId, $segmen);
 
-        $ids = $posisiKini->keys()->merge($posisiLalu->keys())->merge($ph->keys())->unique()->values();
+        $ids = $posisiKini->keys()->merge($ph->keys())->unique()->values();
 
-        return $ids->mapWithKeys(function ($id) use ($posisiKini, $posisiLalu, $ph) {
+        return $ids->mapWithKeys(function ($id) use ($posisiKini, $ph) {
             $kini = $posisiKini->has($id) ? (float) $posisiKini[$id] : null;
-            $lalu = $posisiLalu->has($id) ? (float) $posisiLalu[$id] : null;
-            if ($kini === null || $lalu === null) {
+
+            if ($kini === null) {
                 return [];
             }
 
-            return [$id => Satuan::toJuta($kini - $lalu + (($ph->has($id) ? (float) $ph[$id] : 0.0) * 1_000_000))];
+            $phRupiah = ($ph->has($id) ? (float) $ph[$id] : 0.0) * 1_000_000;
+
+            return [$id => Satuan::toJuta($kini + $phRupiah)];
         });
     }
 
     /**
      * @return \Illuminate\Support\Collection<int|string, float>
      */
-    private function posisiSmlNplPerEntitas(string $tanggal, string $kolom, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $segmen): \Illuminate\Support\Collection
+    private function posisiSmlNplPerEntitas(string $tanggal, string $kolom, ?int $areaId, ?int $cabangId, ?int $ukerId, ?string $segmen, string $netDgKualitas): \Illuminate\Support\Collection
     {
         $query = $this->filterOrganisasi(Pinjaman::query(), $areaId, $cabangId, $ukerId)
-            ->where('tanggal', $tanggal)
-            ->whereIn('kualitas', [Pinjaman::KUALITAS_SML, Pinjaman::KUALITAS_NPL]);
+            ->where('tanggal', $tanggal);
+        $this->terapkanKualitasNetDg($query, $netDgKualitas);
 
         if ($segmen !== null) {
             $query->whereIn('segmen', Segmen::RAW[$segmen] ?? [$segmen]);
@@ -602,16 +648,50 @@ class PhNetDgService
             ->pluck('total', 'entitas_id');
     }
 
-    private function tanggalPosisiPinjamanAkhirBulan(Carbon $periode, ?int $areaId, ?int $cabangId, ?int $ukerId): ?string
+    private function tanggalPosisiPinjamanAkhirBulan(Carbon $periode, ?int $areaId, ?int $cabangId, ?int $ukerId, string $netDgKualitas): ?string
     {
-        $tanggal = $this->filterOrganisasi(Pinjaman::query(), $areaId, $cabangId, $ukerId)
+        $query = $this->filterOrganisasi(Pinjaman::query(), $areaId, $cabangId, $ukerId)
             ->whereBetween('tanggal', [
                 $periode->copy()->startOfMonth()->toDateString(),
                 $periode->copy()->endOfMonth()->toDateString(),
-            ])
-            ->max('tanggal');
+            ]);
+        $this->terapkanKualitasNetDg($query, $netDgKualitas);
+
+        $tanggal = $query->max('tanggal');
 
         return $tanggal === null ? null : Carbon::parse($tanggal)->toDateString();
+    }
+
+    private function normalisasiKualitasNetDg(string $kualitas): string
+    {
+        $kualitas = strtolower(trim($kualitas));
+
+        return in_array($kualitas, self::NETDG_KUALITAS, true)
+            ? $kualitas
+            : self::NETDG_SML;
+    }
+
+    /**
+     * Filter kualitas bersifat eksklusif: SML hanya mengambil SML dan NPL hanya
+     * mengambil NPL. PH bulan yang sama ditambahkan setelah posisi dipisahkan.
+     *
+     * @return list<string>
+     */
+    private function kualitasPinjamanNetDg(string $kualitas): array
+    {
+        return $this->normalisasiKualitasNetDg($kualitas) === self::NETDG_NPL
+            ? [Pinjaman::KUALITAS_NPL]
+            : [Pinjaman::KUALITAS_SML];
+    }
+
+    /**
+     * Terapkan kualitas secara case-insensitive dan tahan spasi sisa pada data
+     * lama. SML dan NPL tetap eksklusif; query tidak pernah menggabungkan keduanya.
+     */
+    private function terapkanKualitasNetDg($query, string $kualitas): void
+    {
+        $kode = $this->kualitasPinjamanNetDg($kualitas)[0];
+        $query->whereRaw('UPPER(TRIM(kualitas)) = ?', [mb_strtoupper($kode)]);
     }
 
     private function scopeToSegmen(?string $scope): ?string

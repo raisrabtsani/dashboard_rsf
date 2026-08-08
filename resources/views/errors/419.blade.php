@@ -3,326 +3,191 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>419 — Sesi Habis</title>
+    <title>Sesi Habis</title>
     <style>
-        :root {
-            --bg-start: #07152d;
-            --bg-end: #0b1e42;
-            --card: rgba(10, 23, 51, 0.74);
-            --card-border: rgba(148, 163, 184, 0.16);
-            --text: #e5eefc;
-            --muted: #9db0d5;
-            --brand: #4f8cff;
-            --brand-2: #1fd0ff;
-            --success: #70f0b2;
-            --warning: #ffd36e;
-            --shadow: 0 30px 80px rgba(1, 10, 29, 0.45);
-        }
-
         * { box-sizing: border-box; }
 
         body {
             margin: 0;
             min-height: 100vh;
-            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            color: var(--text);
-            background:
-                radial-gradient(circle at top left, rgba(79, 140, 255, 0.28), transparent 30%),
-                radial-gradient(circle at bottom right, rgba(31, 208, 255, 0.2), transparent 28%),
-                linear-gradient(135deg, var(--bg-start), var(--bg-end));
             display: grid;
             place-items: center;
-            overflow: hidden;
+            padding: 24px;
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            color: #e8f0ff;
+            background:
+                radial-gradient(circle at 18% 14%, rgba(46, 124, 255, 0.26), transparent 30%),
+                radial-gradient(circle at 84% 82%, rgba(29, 204, 255, 0.16), transparent 28%),
+                linear-gradient(145deg, #07142b 0%, #0a1d3d 100%);
         }
 
-        body::before,
-        body::after {
-            content: "";
-            position: fixed;
-            border-radius: 999px;
-            filter: blur(12px);
-            opacity: 0.55;
-            pointer-events: none;
-        }
-
-        body::before {
-            width: 320px;
-            height: 320px;
-            left: -80px;
-            top: -80px;
-            background: rgba(79, 140, 255, 0.16);
-        }
-
-        body::after {
-            width: 280px;
-            height: 280px;
-            right: -60px;
-            bottom: -60px;
-            background: rgba(31, 208, 255, 0.15);
-        }
-
-        .shell {
-            width: min(920px, calc(100vw - 32px));
-            position: relative;
-        }
-
-        .panel {
+        .card {
+            width: min(440px, 100%);
             position: relative;
             overflow: hidden;
-            border: 1px solid var(--card-border);
-            background: linear-gradient(180deg, rgba(10, 24, 54, 0.8), rgba(10, 24, 54, 0.72));
-            backdrop-filter: blur(18px);
-            border-radius: 28px;
-            box-shadow: var(--shadow);
-            padding: 34px;
+            padding: 30px;
+            border-radius: 26px;
+            border: 1px solid rgba(151, 177, 224, 0.16);
+            background: linear-gradient(180deg, rgba(15, 35, 72, 0.94), rgba(10, 27, 59, 0.94));
+            box-shadow: 0 28px 70px rgba(0, 8, 26, 0.42);
+            text-align: center;
         }
 
-        .panel::before {
+        .card::before {
             content: "";
             position: absolute;
-            inset: 0;
-            background:
-                radial-gradient(circle at top right, rgba(79, 140, 255, 0.16), transparent 26%),
-                radial-gradient(circle at bottom left, rgba(31, 208, 255, 0.12), transparent 30%);
-            pointer-events: none;
-        }
-
-        .grid {
-            position: relative;
-            z-index: 1;
-            display: grid;
-            grid-template-columns: 1.05fr 0.95fr;
-            gap: 26px;
-            align-items: stretch;
+            width: 180px;
+            height: 180px;
+            right: -70px;
+            top: -80px;
+            border-radius: 999px;
+            background: rgba(71, 131, 255, 0.12);
         }
 
         .badge {
+            position: relative;
             display: inline-flex;
             align-items: center;
-            gap: 10px;
-            padding: 10px 14px;
+            gap: 8px;
+            padding: 8px 12px;
             border-radius: 999px;
-            border: 1px solid rgba(79, 140, 255, 0.3);
-            background: rgba(79, 140, 255, 0.08);
+            border: 1px solid rgba(74, 139, 255, 0.28);
+            background: rgba(74, 139, 255, 0.09);
             color: #cfe0ff;
-            font-size: 12px;
-            font-weight: 800;
-            letter-spacing: 0.18em;
-            text-transform: uppercase;
-        }
-
-        .dot {
-            width: 9px;
-            height: 9px;
-            border-radius: 999px;
-            background: linear-gradient(135deg, var(--brand-2), var(--brand));
-            box-shadow: 0 0 0 6px rgba(79, 140, 255, 0.12);
-        }
-
-        .icon-wrap {
-            margin-top: 26px;
-            width: 92px;
-            height: 92px;
-            border-radius: 26px;
-            display: grid;
-            place-items: center;
-            background: linear-gradient(145deg, #1f5ecf, #2f8aff);
-            box-shadow: 0 24px 50px rgba(19, 78, 181, 0.42);
-        }
-
-        .icon-wrap svg {
-            width: 46px;
-            height: 46px;
-        }
-
-        h1 {
-            margin: 22px 0 10px;
-            font-size: clamp(30px, 4vw, 44px);
-            line-height: 1.05;
-            letter-spacing: -0.03em;
-        }
-
-        .lead {
-            margin: 0;
-            max-width: 540px;
-            color: var(--muted);
-            font-size: 16px;
-            line-height: 1.8;
-        }
-
-        .meta {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 14px;
-            margin-top: 26px;
-        }
-
-        .meta-box {
-            min-width: 138px;
-            padding: 14px 16px;
-            border-radius: 18px;
-            background: rgba(255, 255, 255, 0.045);
-            border: 1px solid rgba(148, 163, 184, 0.12);
-        }
-
-        .meta-label {
-            color: #89a1cc;
             font-size: 11px;
-            font-weight: 700;
+            font-weight: 800;
             letter-spacing: 0.16em;
             text-transform: uppercase;
         }
 
-        .meta-value {
-            margin-top: 6px;
-            font-size: 20px;
-            font-weight: 800;
-            letter-spacing: -0.02em;
+        .badge::before {
+            content: "";
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: #52b8ff;
+            box-shadow: 0 0 0 5px rgba(82, 184, 255, 0.12);
         }
 
-        .side {
-            display: flex;
-            flex-direction: column;
-            gap: 18px;
+        .icon {
+            position: relative;
+            width: 72px;
+            height: 72px;
+            margin: 22px auto 0;
+            display: grid;
+            place-items: center;
+            border-radius: 22px;
+            background: linear-gradient(145deg, #2c75f5, #3998ff);
+            box-shadow: 0 18px 36px rgba(30, 99, 220, 0.34);
         }
 
-        .card {
-            padding: 22px;
-            border-radius: 24px;
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(148, 163, 184, 0.12);
+        .icon svg { width: 36px; height: 36px; }
+
+        h1 {
+            position: relative;
+            margin: 20px 0 10px;
+            font-size: 30px;
+            line-height: 1.1;
+            letter-spacing: -0.03em;
         }
 
-        .card h2 {
-            margin: 0 0 14px;
-            font-size: 15px;
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-            color: #b9caeb;
-        }
-
-        .tips {
+        p {
+            position: relative;
             margin: 0;
-            padding-left: 18px;
-            color: var(--muted);
-            line-height: 1.8;
+            color: #9fb2d8;
             font-size: 14px;
+            line-height: 1.75;
         }
 
-        .tips li + li { margin-top: 8px; }
+        .status {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 18px;
+            padding: 8px 12px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #b9cae9;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .status strong { color: #ffffff; }
 
         .actions {
-            display: flex;
-            flex-wrap: wrap;
+            position: relative;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
             gap: 12px;
-            margin-top: 22px;
+            margin-top: 24px;
         }
 
         .btn {
-            appearance: none;
-            border: 0;
-            text-decoration: none;
-            cursor: pointer;
+            min-height: 48px;
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            gap: 10px;
-            min-height: 50px;
-            padding: 0 20px;
-            border-radius: 16px;
+            gap: 9px;
+            border-radius: 14px;
+            border: 0;
+            font: inherit;
+            font-size: 14px;
             font-weight: 800;
-            font-size: 15px;
+            text-decoration: none;
+            cursor: pointer;
             transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
         }
 
         .btn:hover { transform: translateY(-1px); }
 
         .btn-primary {
-            color: white;
-            background: linear-gradient(135deg, var(--brand), #2a6df4);
-            box-shadow: 0 18px 34px rgba(42, 109, 244, 0.34);
+            color: #ffffff;
+            background: linear-gradient(135deg, #347cff, #2b68e9);
+            box-shadow: 0 14px 28px rgba(43, 104, 233, 0.3);
         }
 
         .btn-secondary {
-            color: var(--text);
+            color: #e7efff;
             background: rgba(255, 255, 255, 0.06);
-            border: 1px solid rgba(148, 163, 184, 0.15);
+            border: 1px solid rgba(151, 177, 224, 0.15);
         }
 
-        .helper {
+        .note {
             margin-top: 16px;
-            color: #88a3d8;
-            font-size: 13px;
-            line-height: 1.7;
+            font-size: 12px;
+            color: #7890bc;
         }
 
-        .helper strong { color: var(--warning); }
-
-        @media (max-width: 860px) {
-            .panel { padding: 24px; }
-            .grid { grid-template-columns: 1fr; }
-            .icon-wrap { width: 82px; height: 82px; border-radius: 24px; }
-            .actions { flex-direction: column; }
-            .btn { width: 100%; }
+        @media (max-width: 520px) {
+            .card { padding: 26px 22px; }
+            .actions { grid-template-columns: 1fr; }
         }
     </style>
 </head>
 <body>
-    <div class="shell">
-        <div class="panel">
-            <div class="grid">
-                <section>
-                    <span class="badge"><span class="dot"></span> Session Expired</span>
+    <main class="card" role="alert" aria-live="assertive">
+        <span class="badge">Session Expired</span>
 
-                    <div class="icon-wrap" aria-hidden="true">
-                        <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <rect x="10" y="6" width="28" height="36" rx="8" stroke="white" stroke-width="2.6" opacity="0.95"/>
-                            <path d="M24 14V25" stroke="white" stroke-width="3.2" stroke-linecap="round"/>
-                            <circle cx="24" cy="31.5" r="2.4" fill="white"/>
-                            <path d="M16 10H32" stroke="white" stroke-width="2.6" stroke-linecap="round" opacity="0.75"/>
-                        </svg>
-                    </div>
-
-                    <h1>Sesi Anda Sudah Habis</h1>
-                    <p class="lead">
-                        Halaman ini terbuka terlalu lama atau token keamanan sudah tidak berlaku.
-                        Permintaan terakhir ditolak sehingga Anda perlu memuat ulang halaman atau masuk kembali.
-                    </p>
-
-                    <div class="meta">
-                        <div class="meta-box">
-                            <div class="meta-label">Kode</div>
-                            <div class="meta-value">419</div>
-                        </div>
-                        <div class="meta-box">
-                            <div class="meta-label">Status</div>
-                            <div class="meta-value">Page Expired</div>
-                        </div>
-                    </div>
-                </section>
-
-                <aside class="side">
-                    <div class="card">
-                        <h2>Apa yang perlu dilakukan</h2>
-                        <ul class="tips">
-                            <li>Muat ulang halaman lalu ulangi proses terakhir.</li>
-                            <li>Jika masih muncul, masuk ulang ke aplikasi.</li>
-                            <li>Jika sedang unggah file, pilih ulang file setelah halaman dimuat kembali.</li>
-                        </ul>
-
-                        <div class="actions">
-                            <button type="button" class="btn btn-primary" onclick="window.location.reload()">Muat Ulang Halaman</button>
-                            <a class="btn btn-secondary" href="{{ route('login') }}">Masuk Ulang</a>
-                            <button type="button" class="btn btn-secondary" onclick="window.history.back()">Kembali</button>
-                        </div>
-
-                        <p class="helper">
-                            Jika masalah sering berulang setelah <strong>refresh</strong>, periksa sesi login atau buka kembali aplikasi dari tab baru.
-                        </p>
-                    </div>
-                </aside>
-            </div>
+        <div class="icon" aria-hidden="true">
+            <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="11" y="7" width="26" height="34" rx="7" stroke="white" stroke-width="2.8"/>
+                <path d="M24 15V26" stroke="white" stroke-width="3" stroke-linecap="round"/>
+                <circle cx="24" cy="32" r="2.3" fill="white"/>
+            </svg>
         </div>
-    </div>
+
+        <h1>Sesi Anda Sudah Habis</h1>
+        <p>Silakan refresh halaman untuk melanjutkan. Bila sesi tetap tidak aktif, masuk ulang ke aplikasi.</p>
+
+        <div class="status">Kode <strong>419</strong> · Page Expired</div>
+
+        <div class="actions">
+            <button type="button" class="btn btn-primary" onclick="window.location.reload()">Refresh Halaman</button>
+            <a class="btn btn-secondary" href="{{ route('login') }}">Login Ulang</a>
+        </div>
+
+        <p class="note">Proses yang belum tersimpan perlu dijalankan kembali.</p>
+    </main>
 </body>
 </html>

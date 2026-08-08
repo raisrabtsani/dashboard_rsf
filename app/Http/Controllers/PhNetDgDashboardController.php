@@ -40,12 +40,13 @@ class PhNetDgDashboardController extends Controller
     {
         [$areaId, $cabangId, $ukerId] = $this->filterId($request);
 
-        return response()->json($this->service->snapshot(
+        return $this->jsonTanpaCache($this->service->snapshot(
             $this->mode($request),
             $this->periode($request),
             $areaId,
             $cabangId,
             $ukerId,
+            $this->netDgKualitas($request),
         ));
     }
 
@@ -53,12 +54,13 @@ class PhNetDgDashboardController extends Controller
     {
         [$areaId, $cabangId, $ukerId] = $this->filterId($request);
 
-        return response()->json($this->service->chart(
+        return $this->jsonTanpaCache($this->service->chart(
             $this->mode($request),
             $this->periode($request),
             $areaId,
             $cabangId,
             $ukerId,
+            $this->netDgKualitas($request),
         ));
     }
 
@@ -67,13 +69,14 @@ class PhNetDgDashboardController extends Controller
     {
         [$areaId, $cabangId, $ukerId] = $this->filterId($request);
 
-        return response()->json($this->service->branchPencapaian(
+        return $this->jsonTanpaCache($this->service->branchPencapaian(
             $this->mode($request),
             $this->periode($request),
             $areaId,
             $cabangId,
             $ukerId,
             $request->string('scope')->toString(),
+            $this->netDgKualitas($request),
         ));
     }
 
@@ -104,6 +107,23 @@ class PhNetDgDashboardController extends Controller
         $mode = $request->string('mode')->toString();
 
         return in_array($mode, PhNetDgService::MODE, true) ? $mode : PhNetDgService::MODE_PH;
+    }
+
+    private function netDgKualitas(Request $request): string
+    {
+        $kualitas = strtolower($request->string('netdg_kualitas')->toString());
+
+        return in_array($kualitas, PhNetDgService::NETDG_KUALITAS, true)
+            ? $kualitas
+            : PhNetDgService::NETDG_SML;
+    }
+
+    private function jsonTanpaCache(array $data): JsonResponse
+    {
+        return response()->json($data)->withHeaders([
+            'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+            'Pragma' => 'no-cache',
+        ]);
     }
 
     private function periode(Request $request): string

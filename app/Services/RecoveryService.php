@@ -258,11 +258,13 @@ class RecoveryService
             $nilai = (float) $total;
             $rka = (float) ($target[$entitasId] ?? 0.0);
             $kantor = $entitas->get($entitasId);
-            $area = $perUker ? $kantor?->cabang?->area : $kantor?->area;
+            $cabang = $perUker ? $kantor?->cabang : $kantor;
+            $area = $cabang?->area;
 
             return [
                 'id' => (int) $entitasId,
                 'nama' => $kantor?->nama ?? (string) $entitasId,
+                'cabang_nama' => $perUker ? $cabang?->nama : null,
                 'area_nama' => $area?->nama,
                 'nilai' => Satuan::toJuta($nilai),
                 'target' => Satuan::toJuta($rka),

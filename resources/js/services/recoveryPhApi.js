@@ -13,7 +13,12 @@ const params = (filter = {}) =>
     );
 
 const ambil = (namaRoute, filter) =>
-    axios.get(route(namaRoute), { params: params(filter) }).then((r) => r.data);
+    axios.get(route(namaRoute), {
+        // Penanda unik mencegah browser/proxy mengembalikan respons SML lama
+        // ketika pengguna baru saja mengganti pilihan menjadi NPL, atau sebaliknya.
+        params: { ...params(filter), _request_at: Date.now() },
+        headers: { 'Cache-Control': 'no-cache' },
+    }).then((r) => r.data);
 
 export const fetchFilterOptions = (filter) => ambil('api.recovery-ph.filter-options', filter);
 
