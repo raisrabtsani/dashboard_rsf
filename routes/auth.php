@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\PasswordController;
+use App\Http\Controllers\Auth\SessionExpiredController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -12,6 +13,11 @@ use Illuminate\Support\Facades\Route;
  * Jangan menghidupkan kembali route-route itu; Auth\DisabledAuthFeaturesTest
  * mengunci supaya semuanya tetap 404 dan nama route-nya tidak ada.
  */
+
+// Endpoint GET khusus halaman 419. Endpoint ini sengaja berada di luar
+// middleware guest/auth agar tetap dapat digunakan saat status session tidak jelas.
+Route::get('session-expired/login', SessionExpiredController::class)
+    ->name('session.expired.login');
 
 Route::middleware('guest')->group(function () {
     Route::get('login', [AuthenticatedSessionController::class, 'create'])

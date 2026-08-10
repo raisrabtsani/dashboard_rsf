@@ -4,6 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Sesi Habis</title>
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
     <style>
         * { box-sizing: border-box; }
 
@@ -166,6 +168,13 @@
     </style>
 </head>
 <body>
+    @php
+        $previousUrl = url()->previous();
+        $refreshUrl = $previousUrl !== url()->current()
+            ? $previousUrl
+            : route('dashboard');
+    @endphp
+
     <main class="card" role="alert" aria-live="assertive">
         <span class="badge">Session Expired</span>
 
@@ -183,8 +192,18 @@
         <div class="status">Kode <strong>419</strong> · Page Expired</div>
 
         <div class="actions">
-            <button type="button" class="btn btn-primary" onclick="window.location.reload()">Refresh Halaman</button>
-            <a class="btn btn-secondary" href="{{ route('login') }}">Login Ulang</a>
+            <a
+                class="btn btn-primary"
+                href="{{ $refreshUrl }}"
+                target="_top"
+                onclick="window.top.location.assign(this.href); return false;"
+            >Refresh Halaman</a>
+            <a
+                class="btn btn-secondary"
+                href="{{ route('session.expired.login') }}"
+                target="_top"
+                onclick="window.top.location.assign(this.href); return false;"
+            >Login Ulang</a>
         </div>
 
         <p class="note">Proses yang belum tersimpan perlu dijalankan kembali.</p>

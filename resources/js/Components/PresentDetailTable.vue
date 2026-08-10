@@ -61,11 +61,19 @@ function formatCell(value, format) {
 }
 
 function cellClass(value, format, row, kolom) {
-    // Pada baris % CASA, nilai Actual dan RKA dibuat netral.
-    // Penc RKA serta delta DTD/MTD/YTD/YOY tetap memakai warna indikator.
-    const kolomIndikator = ['penc', 'dtd', 'mtd', 'ytd', 'yoy'];
+    // Pada tabel rasio, nilai Actual dan RKA dibuat netral.
+    // Detail % SML dan % NPL hanya memberi warna pada Penc RKA sampai YTD.
+    const tabelPersenKualitas = ['Detail % SML', 'Detail % NPL'];
+    const kolomIndikator = tabelPersenKualitas.includes(props.judul)
+        ? ['penc', 'dtd', 'mtd', 'ytd']
+        : ['penc', 'dtd', 'mtd', 'ytd', 'yoy'];
+    const tabelRasioNetral = [
+        'Detail Dana Pihak Ketiga',
+        ...tabelPersenKualitas,
+    ];
+
     if (
-        props.judul === 'Detail Dana Pihak Ketiga'
+        tabelRasioNetral.includes(props.judul)
         && row?.row_mode === 'ratio'
         && !kolomIndikator.includes(kolom?.key)
     ) {

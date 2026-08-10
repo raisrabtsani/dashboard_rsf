@@ -52,6 +52,24 @@ class PresentService
     /** @var list<string> */
     private const CASA = [Simpanan::PRODUK_TABUNGAN, Simpanan::PRODUK_GIRO];
 
+    /**
+     * Alias nilai segmen aktual/RKA. Data sumber terbaru menggunakan nama
+     * berbahasa Inggris, tetapi alias lama tetap diterima agar histori tidak
+     * hilang dari tabel PRESENT.
+     *
+     * @var list<string>
+     */
+    private const SEGMEN_MICRO = ['Micro', 'Mikro'];
+
+    /** @var list<string> */
+    private const SEGMEN_SMALL = ['Small', 'Kecil'];
+
+    /** @var list<string> */
+    private const SEGMEN_MEDIUM = ['Medium', 'Menengah'];
+
+    /** @var list<string> */
+    private const SEGMEN_CONSUMER = ['Consumer', 'Konsumer'];
+
     /** @var array<int, string> */
     private const NAMA_BULAN = [
         1 => 'Jan', 2 => 'Feb', 3 => 'Mar', 4 => 'Apr', 5 => 'Mei', 6 => 'Jun',
@@ -156,6 +174,7 @@ class PresentService
                 $this->detailSmlNominal($tanggal),
                 $this->detailSmlRasio($tanggal),
                 $this->detailNplNominal($tanggal),
+                $this->detailNplRasio($tanggal),
             ],
         ];
     }
@@ -212,21 +231,21 @@ class PresentService
             ['label' => 'Total Pinjaman', 'tables' => self::PINJAMAN, 'rka' => self::RKA_PINJAMAN],
             ['label' => 'Total Non Commercial', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']]],
             ['kind' => 'group', 'label' => 'Mikro'],
-            ['label' => 'Mikro', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmen' => ['Mikro']]],
+            ['label' => 'Mikro', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmen' => self::SEGMEN_MICRO]],
             ['label' => 'Kupedes Komersial', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmentasi' => ['Kupedes Komersial']]],
             ['label' => 'Briguna Mikro', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmentasi' => ['Briguna Mikro']]],
             ['label' => 'KUR Mikro', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmentasi' => ['KUR Mikro']]],
             ['label' => 'KPP', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmentasi' => ['KPP']]],
             ['label' => 'KUR Kecil', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmentasi' => ['KUR Kecil']]],
             ['kind' => 'group', 'label' => 'Small & Medium'],
-            ['label' => 'Small', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmen' => ['Kecil']]],
+            ['label' => 'Small', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmen' => self::SEGMEN_SMALL]],
             ['label' => 'Non Cash Collateral', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmentasi' => ['Non Cash Collateral']]],
             ['label' => 'Cash Collateral', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmentasi' => ['Cash Collateral']]],
-            ['label' => 'Medium', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmen' => ['Menengah']]],
+            ['label' => 'Medium', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmen' => self::SEGMEN_MEDIUM]],
             ['kind' => 'group', 'label' => 'Commercial'],
             ['label' => 'Commercial', 'tables' => [['pinjaman_commercial', 'baki_debet']], 'rka' => [['rka_pinjaman_commercial', 'target']]],
             ['kind' => 'group', 'label' => 'Consumer'],
-            ['label' => 'Consumer', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmen' => ['Konsumer', 'Consumer']]],
+            ['label' => 'Consumer', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmen' => self::SEGMEN_CONSUMER]],
             ['label' => 'Briguna', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmentasi' => ['Briguna']]],
             ['label' => 'Non Briguna', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmentasi' => ['Non Briguna']]],
             ['label' => 'KPR', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmentasi' => ['KPR']]],
@@ -251,23 +270,45 @@ class PresentService
     /** @return array<string,mixed> */
     private function detailSmlRasio(string $tanggal): array
     {
+        return $this->detailRasioKualitas(
+            'psml-detail',
+            'Detail % SML',
+            Pinjaman::KUALITAS_SML,
+            $tanggal,
+        );
+    }
+
+    /** @return array<string,mixed> */
+    private function detailNplRasio(string $tanggal): array
+    {
+        return $this->detailRasioKualitas(
+            'pnpl-detail',
+            'Detail % NPL',
+            Pinjaman::KUALITAS_NPL,
+            $tanggal,
+        );
+    }
+
+    /** @return array<string,mixed> */
+    private function detailRasioKualitas(string $key, string $judul, string $kualitas, string $tanggal): array
+    {
         $spesifikasi = [
-            ['mode' => 'ratio', 'label' => 'Total Pinjaman', 'numTables' => self::PINJAMAN, 'numRka' => self::RKA_PINJAMAN, 'numFilter' => ['kualitas' => [Pinjaman::KUALITAS_SML]], 'denTables' => self::PINJAMAN, 'denRka' => self::RKA_PINJAMAN],
-            ['mode' => 'ratio', 'label' => 'Total Non Commercial', 'numTables' => [['pinjaman', 'baki_debet']], 'numRka' => [['rka_pinjaman', 'target']], 'numFilter' => ['kualitas' => [Pinjaman::KUALITAS_SML]], 'denTables' => [['pinjaman', 'baki_debet']], 'denRka' => [['rka_pinjaman', 'target']]],
+            ['mode' => 'ratio', 'label' => 'Total Pinjaman', 'numTables' => self::PINJAMAN, 'numRka' => self::RKA_PINJAMAN, 'numFilter' => ['kualitas' => [$kualitas]], 'denTables' => self::PINJAMAN, 'denRka' => self::RKA_PINJAMAN],
+            ['mode' => 'ratio', 'label' => 'Total Non Commercial', 'numTables' => [['pinjaman', 'baki_debet']], 'numRka' => [['rka_pinjaman', 'target']], 'numFilter' => ['kualitas' => [$kualitas]], 'denTables' => [['pinjaman', 'baki_debet']], 'denRka' => [['rka_pinjaman', 'target']]],
             ['kind' => 'group', 'label' => 'Mikro'],
-            ['mode' => 'ratio', 'label' => 'Mikro', 'numTables' => [['pinjaman', 'baki_debet']], 'numRka' => [['rka_pinjaman', 'target']], 'numFilter' => ['segmen' => ['Mikro'], 'kualitas' => [Pinjaman::KUALITAS_SML]], 'denTables' => [['pinjaman', 'baki_debet']], 'denRka' => [['rka_pinjaman', 'target']], 'denFilter' => ['segmen' => ['Mikro']]],
-            ['mode' => 'ratio', 'label' => 'Small', 'numTables' => [['pinjaman', 'baki_debet']], 'numRka' => [['rka_pinjaman', 'target']], 'numFilter' => ['segmen' => ['Kecil'], 'kualitas' => [Pinjaman::KUALITAS_SML]], 'denTables' => [['pinjaman', 'baki_debet']], 'denRka' => [['rka_pinjaman', 'target']], 'denFilter' => ['segmen' => ['Kecil']]],
-            ['mode' => 'ratio', 'label' => 'Medium', 'numTables' => [['pinjaman', 'baki_debet']], 'numRka' => [['rka_pinjaman', 'target']], 'numFilter' => ['segmen' => ['Menengah'], 'kualitas' => [Pinjaman::KUALITAS_SML]], 'denTables' => [['pinjaman', 'baki_debet']], 'denRka' => [['rka_pinjaman', 'target']], 'denFilter' => ['segmen' => ['Menengah']]],
-            ['mode' => 'ratio', 'label' => 'Commercial', 'numTables' => [['pinjaman_commercial', 'baki_debet']], 'numRka' => [['rka_pinjaman_commercial', 'target']], 'numFilter' => ['kualitas' => [Pinjaman::KUALITAS_SML]], 'denTables' => [['pinjaman_commercial', 'baki_debet']], 'denRka' => [['rka_pinjaman_commercial', 'target']]],
+            ['mode' => 'ratio', 'label' => 'Mikro', 'numTables' => [['pinjaman', 'baki_debet']], 'numRka' => [['rka_pinjaman', 'target']], 'numFilter' => ['segmen' => self::SEGMEN_MICRO, 'kualitas' => [$kualitas]], 'denTables' => [['pinjaman', 'baki_debet']], 'denRka' => [['rka_pinjaman', 'target']], 'denFilter' => ['segmen' => self::SEGMEN_MICRO]],
+            ['mode' => 'ratio', 'label' => 'Small', 'numTables' => [['pinjaman', 'baki_debet']], 'numRka' => [['rka_pinjaman', 'target']], 'numFilter' => ['segmen' => self::SEGMEN_SMALL, 'kualitas' => [$kualitas]], 'denTables' => [['pinjaman', 'baki_debet']], 'denRka' => [['rka_pinjaman', 'target']], 'denFilter' => ['segmen' => self::SEGMEN_SMALL]],
+            ['mode' => 'ratio', 'label' => 'Medium', 'numTables' => [['pinjaman', 'baki_debet']], 'numRka' => [['rka_pinjaman', 'target']], 'numFilter' => ['segmen' => self::SEGMEN_MEDIUM, 'kualitas' => [$kualitas]], 'denTables' => [['pinjaman', 'baki_debet']], 'denRka' => [['rka_pinjaman', 'target']], 'denFilter' => ['segmen' => self::SEGMEN_MEDIUM]],
+            ['mode' => 'ratio', 'label' => 'Commercial', 'numTables' => [['pinjaman_commercial', 'baki_debet']], 'numRka' => [['rka_pinjaman_commercial', 'target']], 'numFilter' => ['kualitas' => [$kualitas]], 'denTables' => [['pinjaman_commercial', 'baki_debet']], 'denRka' => [['rka_pinjaman_commercial', 'target']]],
             ['kind' => 'group', 'label' => 'Consumer'],
-            ['mode' => 'ratio', 'label' => 'Consumer', 'numTables' => [['pinjaman', 'baki_debet']], 'numRka' => [['rka_pinjaman', 'target']], 'numFilter' => ['segmen' => ['Konsumer', 'Consumer'], 'kualitas' => [Pinjaman::KUALITAS_SML]], 'denTables' => [['pinjaman', 'baki_debet']], 'denRka' => [['rka_pinjaman', 'target']], 'denFilter' => ['segmen' => ['Konsumer', 'Consumer']]],
-            ['mode' => 'ratio', 'label' => 'Briguna', 'numTables' => [['pinjaman', 'baki_debet']], 'numRka' => [['rka_pinjaman', 'target']], 'numFilter' => ['segmentasi' => ['Briguna'], 'kualitas' => [Pinjaman::KUALITAS_SML]], 'denTables' => [['pinjaman', 'baki_debet']], 'denRka' => [['rka_pinjaman', 'target']], 'denFilter' => ['segmentasi' => ['Briguna']]],
-            ['mode' => 'ratio', 'label' => 'Non Briguna', 'numTables' => [['pinjaman', 'baki_debet']], 'numRka' => [['rka_pinjaman', 'target']], 'numFilter' => ['segmentasi' => ['Non Briguna'], 'kualitas' => [Pinjaman::KUALITAS_SML]], 'denTables' => [['pinjaman', 'baki_debet']], 'denRka' => [['rka_pinjaman', 'target']], 'denFilter' => ['segmentasi' => ['Non Briguna']]],
-            ['mode' => 'ratio', 'label' => 'KPR', 'numTables' => [['pinjaman', 'baki_debet']], 'numRka' => [['rka_pinjaman', 'target']], 'numFilter' => ['segmentasi' => ['KPR'], 'kualitas' => [Pinjaman::KUALITAS_SML]], 'denTables' => [['pinjaman', 'baki_debet']], 'denRka' => [['rka_pinjaman', 'target']], 'denFilter' => ['segmentasi' => ['KPR']]],
-            ['mode' => 'ratio', 'label' => 'KKB', 'numTables' => [['pinjaman', 'baki_debet']], 'numRka' => [['rka_pinjaman', 'target']], 'numFilter' => ['segmentasi' => ['KKB'], 'kualitas' => [Pinjaman::KUALITAS_SML]], 'denTables' => [['pinjaman', 'baki_debet']], 'denRka' => [['rka_pinjaman', 'target']], 'denFilter' => ['segmentasi' => ['KKB']]],
+            ['mode' => 'ratio', 'label' => 'Consumer', 'numTables' => [['pinjaman', 'baki_debet']], 'numRka' => [['rka_pinjaman', 'target']], 'numFilter' => ['segmen' => self::SEGMEN_CONSUMER, 'kualitas' => [$kualitas]], 'denTables' => [['pinjaman', 'baki_debet']], 'denRka' => [['rka_pinjaman', 'target']], 'denFilter' => ['segmen' => self::SEGMEN_CONSUMER]],
+            ['mode' => 'ratio', 'label' => 'Briguna', 'numTables' => [['pinjaman', 'baki_debet']], 'numRka' => [['rka_pinjaman', 'target']], 'numFilter' => ['segmentasi' => ['Briguna'], 'kualitas' => [$kualitas]], 'denTables' => [['pinjaman', 'baki_debet']], 'denRka' => [['rka_pinjaman', 'target']], 'denFilter' => ['segmentasi' => ['Briguna']]],
+            ['mode' => 'ratio', 'label' => 'Non Briguna', 'numTables' => [['pinjaman', 'baki_debet']], 'numRka' => [['rka_pinjaman', 'target']], 'numFilter' => ['segmentasi' => ['Non Briguna'], 'kualitas' => [$kualitas]], 'denTables' => [['pinjaman', 'baki_debet']], 'denRka' => [['rka_pinjaman', 'target']], 'denFilter' => ['segmentasi' => ['Non Briguna']]],
+            ['mode' => 'ratio', 'label' => 'KPR', 'numTables' => [['pinjaman', 'baki_debet']], 'numRka' => [['rka_pinjaman', 'target']], 'numFilter' => ['segmentasi' => ['KPR'], 'kualitas' => [$kualitas]], 'denTables' => [['pinjaman', 'baki_debet']], 'denRka' => [['rka_pinjaman', 'target']], 'denFilter' => ['segmentasi' => ['KPR']]],
+            ['mode' => 'ratio', 'label' => 'KKB', 'numTables' => [['pinjaman', 'baki_debet']], 'numRka' => [['rka_pinjaman', 'target']], 'numFilter' => ['segmentasi' => ['KKB'], 'kualitas' => [$kualitas]], 'denTables' => [['pinjaman', 'baki_debet']], 'denRka' => [['rka_pinjaman', 'target']], 'denFilter' => ['segmentasi' => ['KKB']]],
         ];
 
-        return $this->tabelRincianMetrik('psml-detail', 'Detail % SML', self::PINJAMAN, $tanggal, $spesifikasi, inverse: true, mode: 'ratio');
+        return $this->tabelRincianMetrik($key, $judul, self::PINJAMAN, $tanggal, $spesifikasi, inverse: true, mode: 'ratio');
     }
 
     /** @return list<array<string,mixed>> */
@@ -277,12 +318,12 @@ class PresentService
             ['label' => 'Total Pinjaman', 'tables' => self::PINJAMAN, 'rka' => self::RKA_PINJAMAN, 'filter' => ['kualitas' => [$kualitas]]],
             ['label' => 'Total Non Commercial', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['kualitas' => [$kualitas]]],
             ['kind' => 'group', 'label' => 'Mikro'],
-            ['label' => 'Mikro', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmen' => ['Mikro'], 'kualitas' => [$kualitas]]],
-            ['label' => 'Small', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmen' => ['Kecil'], 'kualitas' => [$kualitas]]],
-            ['label' => 'Medium', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmen' => ['Menengah'], 'kualitas' => [$kualitas]]],
+            ['label' => 'Mikro', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmen' => self::SEGMEN_MICRO, 'kualitas' => [$kualitas]]],
+            ['label' => 'Small', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmen' => self::SEGMEN_SMALL, 'kualitas' => [$kualitas]]],
+            ['label' => 'Medium', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmen' => self::SEGMEN_MEDIUM, 'kualitas' => [$kualitas]]],
             ['label' => 'Commercial', 'tables' => [['pinjaman_commercial', 'baki_debet']], 'rka' => [['rka_pinjaman_commercial', 'target']], 'filter' => ['kualitas' => [$kualitas]]],
             ['kind' => 'group', 'label' => 'Consumer'],
-            ['label' => 'Consumer', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmen' => ['Konsumer', 'Consumer'], 'kualitas' => [$kualitas]]],
+            ['label' => 'Consumer', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmen' => self::SEGMEN_CONSUMER, 'kualitas' => [$kualitas]]],
             ['label' => 'Briguna', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmentasi' => ['Briguna'], 'kualitas' => [$kualitas]]],
             ['label' => 'Non Briguna', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmentasi' => ['Non Briguna'], 'kualitas' => [$kualitas]]],
             ['label' => 'KPR', 'tables' => [['pinjaman', 'baki_debet']], 'rka' => [['rka_pinjaman', 'target']], 'filter' => ['segmentasi' => ['KPR'], 'kualitas' => [$kualitas]]],
@@ -997,6 +1038,7 @@ class PresentService
                 ->when(isset($filter['produk']), fn ($q) => $q->whereIn('produk', $filter['produk']))
                 ->when(isset($filter['kualitas']), fn ($q) => $q->whereIn('kualitas', $filter['kualitas']))
                 ->when(isset($filter['segmen']), fn ($q) => $q->whereIn('segmen', $filter['segmen']))
+                ->when(isset($filter['segmentasi']), fn ($q) => $q->whereIn('segmentasi', $filter['segmentasi']))
                 ->where('tanggal', $tanggal)
                 ->groupBy('cabang_id')
                 ->selectRaw("cabang_id, SUM({$kolom}) as t")   // $kolom dari konstanta kelas, aman
@@ -1038,6 +1080,7 @@ class PresentService
                 ->when(isset($filter['produk']), fn ($q) => $q->whereIn('produk', $filter['produk']))
                 ->when(isset($filter['kualitas']), fn ($q) => $q->whereIn('kualitas', $filter['kualitas']))
                 ->when(isset($filter['segmen']), fn ($q) => $q->whereIn('segmen', $filter['segmen']))
+                ->when(isset($filter['segmentasi']), fn ($q) => $q->whereIn('segmentasi', $filter['segmentasi']))
                 ->where('tahun', $tahun)
                 ->where('bulan', $bulan)
                 ->sum($kolom);
@@ -1062,6 +1105,7 @@ class PresentService
                 ->when(isset($filter['produk']), fn ($q) => $q->whereIn('produk', $filter['produk']))
                 ->when(isset($filter['kualitas']), fn ($q) => $q->whereIn('kualitas', $filter['kualitas']))
                 ->when(isset($filter['segmen']), fn ($q) => $q->whereIn('segmen', $filter['segmen']))
+                ->when(isset($filter['segmentasi']), fn ($q) => $q->whereIn('segmentasi', $filter['segmentasi']))
                 ->where('tahun', $tahun)
                 ->where('bulan', $bulan)
                 ->groupBy('cabang_id')
