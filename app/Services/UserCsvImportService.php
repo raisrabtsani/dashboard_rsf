@@ -2,10 +2,18 @@
 
 namespace App\Services;
 
+use App\Exceptions\ImportException;
+use App\Models\Cabang;
+use App\Models\Region;
+use App\Models\Uker;
 use App\Models\User;
 use App\Support\Csv;
+use App\Support\PetaKolom;
+use App\Support\Spreadsheet;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use RuntimeException;
 
@@ -32,6 +40,19 @@ class UserCsvImportService
     public const FILE = 'user.csv';
 
     private const KOLOM = ['id_cabang', 'id_uker', 'User', 'Nama', 'Type Uker', 'Role', 'Password'];
+
+    public const KOLOM_UPLOAD = ['id_region', 'id_cabang', 'id_uker', 'User', 'Nama', 'Type Uker', 'Role', 'Password'];
+
+    private const ALIAS_UPLOAD = [
+        'id_region' => ['region', 'region_id'],
+        'id_cabang' => ['cabang', 'cabang_id'],
+        'id_uker' => ['uker', 'uker_id'],
+        'User' => ['username', 'user id'],
+        'Nama' => ['name', 'nama user'],
+        'Type Uker' => ['tipe', 'tipe uker', 'type_uker'],
+        'Role' => ['peran'],
+        'Password' => ['kata sandi'],
+    ];
 
     /**
      * Normalisasi "Type Uker" di CSV ke nilai kolom users.tipe.
@@ -90,6 +111,80 @@ class UserCsvImportService
     {
         $baris = $this->baris($path);
 
+        return $this->syncBaris($baris);
+    }
+
+    /**
+     * Impor dari panel Admin. Mendukung CSV/Excel dan memvalidasi hubungan
+     * region -> cabang -> unit kerja sebelum satu pun user disimpan.
+     *
+     * Password hanya diterapkan pada username baru. Password akun yang sudah
+     * ada tidak ditimpa oleh berkas impor.
+     *
+     * @return array{baru: int, diperbarui: int}
+     */
+    public function syncUpload(UploadedFile $file): array
+    {
+        $nama = $file->getClientOriginalName();
+        $sumber = Spreadsheet::baca($file->getRealPath(), [], $nama);
+        $sumber = PetaKolom::petakan($sumber, self::ALIAS_UPLOAD, self::KOLOM_UPLOAD, $nama);
+
+        $region = Region::query()->pluck('id')->map(fn ($id) => (int) $id)->flip();
+        $cabang = Cabang::query()->get(['id', 'region_id'])->keyBy(fn (Cabang $item) => (int) $item->id);
+        $uker = Uker::query()->get(['id', 'cabang_id'])->keyBy(fn (Uker $item) => (int) $item->id);
+        $usernameTerlihat = [];
+
+        $baris = $sumber->map(function (array $r, int $index) use ($region, $cabang, $uker, &$usernameTerlihat) {
+            $nomor = $index + 2;
+            $hasil = $this->normalkanUpload($r, $nomor);
+            $idRegion = (int) $r['id_region'];
+            $idCabang = (int) $hasil['cabang_id'];
+            $idUker = (int) $hasil['uker_id'];
+            $kunciUsername = mb_strtolower($hasil['username']);
+
+            if (isset($usernameTerlihat[$kunciUsername])) {
+                throw ImportException::berkas("Baris {$nomor}: username {$hasil['username']} duplikat dengan baris {$usernameTerlihat[$kunciUsername]}.");
+            }
+            $usernameTerlihat[$kunciUsername] = $nomor;
+
+            if (! $region->has($idRegion)) {
+                throw ImportException::berkas("Baris {$nomor}: id_region {$idRegion} tidak ditemukan di master region.");
+            }
+
+            /** @var Cabang|null $masterCabang */
+            $masterCabang = $cabang->get($idCabang);
+            if ($masterCabang === null) {
+                throw ImportException::berkas("Baris {$nomor}: id_cabang {$idCabang} tidak ditemukan di master kantor.");
+            }
+            if ((int) $masterCabang->region_id !== $idRegion) {
+                throw ImportException::berkas("Baris {$nomor}: id_cabang {$idCabang} bukan bagian dari id_region {$idRegion}.");
+            }
+
+            /** @var Uker|null $masterUker */
+            $masterUker = $uker->get($idUker);
+            if ($masterUker === null) {
+                throw ImportException::berkas("Baris {$nomor}: id_uker {$idUker} tidak ditemukan di master kantor.");
+            }
+            if ((int) $masterUker->cabang_id !== $idCabang) {
+                throw ImportException::berkas("Baris {$nomor}: id_uker {$idUker} bukan bagian dari id_cabang {$idCabang}.");
+            }
+
+            return $hasil;
+        });
+
+        return DB::transaction(fn () => $this->syncBaris($baris));
+    }
+
+    /**
+     * @param  Collection<int, array<string, mixed>>  $baris
+     * @return array{baru: int, diperbarui: int}
+     */
+    private function syncBaris(Collection $baris): array
+    {
+        if ($baris->isEmpty()) {
+            throw ImportException::berkas('Berkas user tidak memiliki baris data.');
+        }
+
         $sudahAda = User::query()
             ->whereIn('username', $baris->pluck('username'))
             ->pluck('username')
@@ -132,10 +227,59 @@ class UserCsvImportService
             'role' => $this->role($r['Role']),
             'tipe' => $this->tipe($r['Type Uker'], $username),
             // Diambil apa adanya dari file — sudah benar di sumbernya:
-            // RO = 855/855, BO id_cabang == id_uker, uker pakai id_uker-nya.
+            // RO = kantor Region, BO id_cabang == id_uker, unit memakai id_uker.
             'cabang_id' => (int) trim($r['id_cabang']),
             'uker_id' => (int) trim($r['id_uker']),
             'password_plain' => trim($r['Password']) ?: self::PASSWORD_DEFAULT,
+        ];
+    }
+
+    /**
+     * @param  array<string, string>  $r
+     * @return array<string, mixed>
+     */
+    private function normalkanUpload(array $r, int $nomor): array
+    {
+        foreach (['id_region', 'id_cabang', 'id_uker'] as $kolom) {
+            $nilai = trim((string) ($r[$kolom] ?? ''));
+            if (! ctype_digit($nilai) || (int) $nilai < 1) {
+                throw ImportException::berkas("Baris {$nomor}: {$kolom} wajib berupa angka positif.");
+            }
+        }
+
+        $username = trim((string) ($r['User'] ?? ''));
+        $nama = trim((string) ($r['Nama'] ?? ''));
+        $password = trim((string) ($r['Password'] ?? ''));
+        $roleMentah = trim((string) ($r['Role'] ?? ''));
+
+        if ($username === '' || $nama === '') {
+            throw ImportException::berkas("Baris {$nomor}: User dan Nama wajib diisi.");
+        }
+        if (mb_strlen($username) > 255 || mb_strlen($nama) > 255) {
+            throw ImportException::berkas("Baris {$nomor}: User dan Nama maksimal 255 karakter.");
+        }
+        if (! in_array(mb_strtolower($roleMentah), ['admin', 'user'], true)) {
+            throw ImportException::berkas("Baris {$nomor}: Role '{$roleMentah}' tidak valid. Gunakan Admin atau User.");
+        }
+        if ($password !== '' && mb_strlen($password) < 8) {
+            throw ImportException::berkas("Baris {$nomor}: Password minimal 8 karakter.");
+        }
+
+        try {
+            $tipe = $this->tipe((string) ($r['Type Uker'] ?? ''), $username);
+        } catch (RuntimeException $e) {
+            throw ImportException::berkas("Baris {$nomor}: {$e->getMessage()}");
+        }
+
+        return [
+            'username' => $username,
+            'name' => $nama,
+            'email' => null,
+            'role' => mb_strtolower($roleMentah) === 'admin' ? User::ROLE_ADMIN : User::ROLE_USER,
+            'tipe' => $tipe,
+            'cabang_id' => (int) $r['id_cabang'],
+            'uker_id' => (int) $r['id_uker'],
+            'password_plain' => $password ?: self::PASSWORD_DEFAULT,
         ];
     }
 

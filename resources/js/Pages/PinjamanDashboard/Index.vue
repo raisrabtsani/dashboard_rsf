@@ -269,7 +269,7 @@ function rasioBaris(baris, totalBaris) {
         ...baris,
         nilai,
         target,
-        pencapaian: target > 0 ? (nilai / target) * 100 : null,
+        pencapaian: nilai > 0 && target !== null ? (target / nilai) * 100 : null,
         gap: nilai !== null && target !== null ? nilai - target : null,
     };
 }
@@ -337,7 +337,7 @@ const branch = computed(() => {
                 ...total,
                 nilai,
                 target,
-                pencapaian: target > 0 ? (nilai / target) * 100 : null,
+                pencapaian: nilai > 0 && target !== null ? (target / nilai) * 100 : null,
                 gap: nilai !== null && target !== null ? nilai - target : null,
                 dtd: rasioDeltaCabang(total, quality, 'dtd'),
                 mtd: rasioDeltaCabang(total, quality, 'mtd'),
@@ -739,7 +739,7 @@ onMounted(async () => {
                                 <p class="mt-0.5 text-base font-extrabold tabular-nums">{{ formatAngka(heroKartu(q.key)?.target) }}</p>
                                 <span
                                     class="mt-1.5 inline-flex rounded-md bg-white/90 px-2 py-0.5 text-[9px] font-extrabold"
-                                    :class="pctBadgeClsArah(heroKartu(q.key)?.pencapaian, q.inverse)"
+                                    :class="pctBadgeClsArah(heroKartu(q.key)?.pencapaian, false)"
                                 >
                                     Penc {{ formatPct(heroKartu(q.key)?.pencapaian) }}
                                 </span>
@@ -828,7 +828,7 @@ onMounted(async () => {
                                 </div>
                                 <div class="text-right text-[8px]">
                                     <p class="font-semibold text-slate-400">SML {{ formatPct(rasioKualitas(s, 'sml')) }}</p>
-                                    <p class="mt-0.5 font-bold" :class="pctBadgeClsArah(s.sml?.pencapaian, true)">Penc {{ formatPct(s.sml?.pencapaian) }}</p>
+                                    <p class="mt-0.5 font-bold" :class="pctBadgeClsArah(s.sml?.pencapaian, false)">Penc {{ formatPct(s.sml?.pencapaian) }}</p>
                                 </div>
                             </div>
                             <div class="mt-1.5 grid grid-cols-4 gap-1">
@@ -847,7 +847,7 @@ onMounted(async () => {
                                 </div>
                                 <div class="text-right text-[8px]">
                                     <p class="font-semibold text-slate-400">NPL {{ formatPct(rasioKualitas(s, 'npl')) }}</p>
-                                    <p class="mt-0.5 font-bold" :class="pctBadgeClsArah(s.npl?.pencapaian, true)">Penc {{ formatPct(s.npl?.pencapaian) }}</p>
+                                    <p class="mt-0.5 font-bold" :class="pctBadgeClsArah(s.npl?.pencapaian, false)">Penc {{ formatPct(s.npl?.pencapaian) }}</p>
                                 </div>
                             </div>
                             <div class="mt-1.5 grid grid-cols-4 gap-1">
@@ -943,7 +943,7 @@ onMounted(async () => {
                                     <td class="table-cell text-right font-extrabold text-blue-700">{{ produkNilai(kelompok.total?.nilai) }}</td>
                                     <td class="table-cell text-right font-semibold text-slate-500">{{ produkNilai(kelompok.total?.target) }}</td>
                                     <td class="table-cell text-right">
-                                        <span class="rounded px-1.5 py-0.5 font-bold" :class="pctBadgeClsArah(kelompok.total?.pencapaian, produkInverse)">
+                                        <span class="rounded px-1.5 py-0.5 font-bold" :class="pctBadgeClsArah(kelompok.total?.pencapaian, false)">
                                             {{ formatPct(kelompok.total?.pencapaian) }}
                                         </span>
                                     </td>
@@ -969,7 +969,7 @@ onMounted(async () => {
                                     <td class="table-cell text-right font-bold text-slate-700">{{ produkNilai(row.nilai) }}</td>
                                     <td class="table-cell text-right text-slate-400">{{ produkNilai(row.target) }}</td>
                                     <td class="table-cell text-right">
-                                        <span class="rounded px-1.5 py-0.5 font-bold" :class="pctBadgeClsArah(row.pencapaian, produkInverse)">
+                                        <span class="rounded px-1.5 py-0.5 font-bold" :class="pctBadgeClsArah(row.pencapaian, false)">
                                             {{ formatPct(row.pencapaian) }}
                                         </span>
                                     </td>
@@ -1083,7 +1083,7 @@ onMounted(async () => {
                                 <td class="px-3 py-2 text-right font-bold tabular-nums text-slate-700">{{ formatBranchNilai(b.nilai) }}</td>
                                 <td class="px-3 py-2 text-right tabular-nums text-slate-500">{{ formatBranchNilai(b.target) }}</td>
                                 <td class="px-3 py-2 text-right">
-                                    <span class="rounded-md px-1.5 py-0.5 font-bold tabular-nums" :class="pctBadgeClsArah(b.pencapaian, cabangInverse)">
+                                    <span class="rounded-md px-1.5 py-0.5 font-bold tabular-nums" :class="pctBadgeClsArah(b.pencapaian, false)">
                                         {{ formatPct(b.pencapaian) }}
                                     </span>
                                 </td>

@@ -182,7 +182,7 @@ class PinjamanService
                 'nilai' => Satuan::toJuta($aktual),
                 'delta' => $delta,
                 'target' => Satuan::toJuta($rka),
-                'pencapaian' => $rka > 0 ? round($aktual / $rka * 100, 2) : null,
+                'pencapaian' => $this->hitungPencapaian($aktual, $rka, $tab),
                 'gap' => Satuan::toJuta($aktual - $rka),
             ];
         }
@@ -320,7 +320,7 @@ class PinjamanService
                     $pembanding[$jenis] = $tgl === null ? null : (float) ($nilai[$tgl][$segmen][$segmentasi] ?? 0);
                 }
 
-                $produk[] = ['segmentasi' => $segmentasi] + $this->barisPencapaian($aktual, $rka, $pembanding);
+                $produk[] = ['segmentasi' => $segmentasi] + $this->barisPencapaian($aktual, $rka, $pembanding, $tab);
             }
 
             // Produk terurut nilai desc; produk tanpa nama ("") ke akhir.
@@ -332,6 +332,7 @@ class PinjamanService
                     array_sum($posisiNilai[$segmen] ?? []),
                     array_sum($target[$segmen] ?? []),
                     $totalPembanding,
+                    $tab,
                 ),
                 'produk' => $produk,
             ];
@@ -425,7 +426,7 @@ class PinjamanService
                 ->get(['id', 'area_id', 'nama'])
                 ->keyBy('id');
 
-        $baris = $ids->map(function ($entitasId) use ($aktual, $target, $entitas, $perUker, $referensi, $pembanding) {
+        $baris = $ids->map(function ($entitasId) use ($aktual, $target, $entitas, $perUker, $referensi, $pembanding, $tab) {
             $rka = (float) ($target[$entitasId] ?? 0);
             $nilai = (float) ($aktual[$entitasId] ?? 0);
             $detail = $entitas->get((int) $entitasId);
@@ -448,7 +449,7 @@ class PinjamanService
                 'area_head' => $cabang?->area?->nama,
                 'nilai' => Satuan::toJuta($nilai),
                 'target' => Satuan::toJuta($rka),
-                'pencapaian' => $rka > 0 ? round($nilai / $rka * 100, 2) : null,
+                'pencapaian' => $this->hitungPencapaian($nilai, $rka, $tab),
                 'gap' => Satuan::toJuta($nilai - $rka),
                 'dtd' => $delta['dtd'],
                 'mtd' => $delta['mtd'],
@@ -715,7 +716,7 @@ class PinjamanService
      * @param  array<string, float|null>  $pembanding  nilai pembanding per jenis delta; null = tanggal referensi tak tersedia
      * @return array<string, mixed>
      */
-    private function barisPencapaian(float $aktual, float $rka, array $pembanding): array
+    private function barisPencapaian(float $aktual, float $rka, array $pembanding, string $tab): array
     {
         $delta = [];
 
@@ -726,10 +727,24 @@ class PinjamanService
         return [
             'nilai' => Satuan::toJuta($aktual),
             'target' => Satuan::toJuta($rka),
-            'pencapaian' => $rka > 0 ? round($aktual / $rka * 100, 2) : null,
+            'pencapaian' => $this->hitungPencapaian($aktual, $rka, $tab),
             'gap' => Satuan::toJuta($aktual - $rka),
             'delta' => $delta,
         ];
+    }
+
+    /**
+     * Total memakai Actual / Target. Khusus SML dan NPL memakai Target / Actual
+     * agar 100% berarti actual sama dengan batas RKA dan nilai di atas 100%
+     * berarti actual masih berada di bawah batas.
+     */
+    private function hitungPencapaian(float $aktual, float $rka, string $tab): ?float
+    {
+        if (in_array($tab, self::TAB_INVERSE, true)) {
+            return $aktual > 0 ? round($rka / $aktual * 100, 2) : null;
+        }
+
+        return $rka > 0 ? round($aktual / $rka * 100, 2) : null;
     }
 
     /**

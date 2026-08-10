@@ -161,6 +161,9 @@ const options = computed(() => {
         interaction: { mode: 'index', intersect: false },
         layout: { padding: gayaTrend ? { top: 10, right: 10, left: 0, bottom: 0 } : 0 },
         plugins: {
+            // ChartDataLabels didaftarkan global oleh ComboChart. Tanpa override
+            // ini seluruh angka mentah menumpuk di setiap titik line trend.
+            datalabels: { display: false },
             legend: {
                 display: props.tampilkanLegenda,
                 position: 'bottom',

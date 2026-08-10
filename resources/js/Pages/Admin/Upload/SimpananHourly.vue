@@ -3,7 +3,7 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import LoadingOverlay from '@/Components/LoadingOverlay.vue';
 import ImportReportCard from '@/Components/Admin/ImportReportCard.vue';
 import SortArrow from '@/Components/SortArrow.vue';
-import { Head } from '@inertiajs/vue3';
+import { Head, Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, onMounted, ref } from 'vue';
 import { formatAngka } from '@/utils/formatAngka';
@@ -108,9 +108,15 @@ onMounted(muat);
 
     <AuthenticatedLayout>
         <template #header>
-            <h2 class="text-xl font-semibold leading-tight text-gray-800">
-                Admin — Upload DPK Hourly
-            </h2>
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <h2 class="text-xl font-semibold leading-tight text-gray-800">
+                    Admin — Upload DPK Hourly
+                </h2>
+                <Link :href="route('admin.index')" class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-blue-200 hover:text-blue-700">
+                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m15 18-6-6 6-6" /></svg>
+                    Kembali ke Admin
+                </Link>
+            </div>
         </template>
 
         <div class="py-8">

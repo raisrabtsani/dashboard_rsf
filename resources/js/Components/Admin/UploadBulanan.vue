@@ -2,7 +2,7 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import LoadingOverlay from '@/Components/LoadingOverlay.vue';
 import ImportReportCard from '@/Components/Admin/ImportReportCard.vue';
-import { Head } from '@inertiajs/vue3';
+import { Head, Link } from '@inertiajs/vue3';
 import { computed, onMounted, ref } from 'vue';
 import { buatAdminApiBulanan } from '@/services/adminDomainApi';
 import { formatAngka } from '@/utils/formatAngka';
@@ -167,9 +167,15 @@ onMounted(muat);
 
     <AuthenticatedLayout>
         <template #header>
-            <div>
-                <p class="text-xs font-bold uppercase tracking-[0.18em] text-brand-600">Administrasi Data</p>
-                <h2 class="mt-1 text-xl font-bold text-slate-900">{{ judul }}</h2>
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <p class="text-xs font-bold uppercase tracking-[0.18em] text-brand-600">Administrasi Data</p>
+                    <h2 class="mt-1 text-xl font-bold text-slate-900">{{ judul }}</h2>
+                </div>
+                <Link :href="route('admin.index')" class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-blue-200 hover:text-blue-700">
+                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m15 18-6-6 6-6" /></svg>
+                    Kembali ke Admin
+                </Link>
             </div>
         </template>
 

@@ -255,10 +255,10 @@ class PinjamanDashboardTest extends TestCase
         $this->assertSame(1_200.0, $total['target']);
         $this->assertSame(83.33, $total['pencapaian']);
 
-        // Tab NPL: target 100, aktual 80 -> 80% (dan 80% itu BAGUS untuk NPL)
+        // Tab NPL: target 100, aktual 80 -> target/aktual = 125%.
         $npl = $this->kartu($this->snapshot($this->admin(), 'npl', ['cabang_id' => self::CABANG_A]), 'total');
         $this->assertSame(100.0, $npl['target']);
-        $this->assertSame(80.0, $npl['pencapaian']);
+        $this->assertSame(125.0, $npl['pencapaian']);
     }
 
     public function test_target_os_tidak_dijumlahkan_lagi_dengan_target_sml_dan_npl(): void

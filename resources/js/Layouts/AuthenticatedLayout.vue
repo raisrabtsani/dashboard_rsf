@@ -27,8 +27,8 @@ const watermarkStyle = computed(() => {
     const teks = escXml(`${user.value.name} · ${user.value.username}`);
     const svg =
         `<svg xmlns='http://www.w3.org/2000/svg' width='520' height='240'>` +
-        `<text x='14' y='138' font-family='Inter, sans-serif' font-size='23' font-weight='600' ` +
-        `fill='#0f172a' fill-opacity='0.05'>${teks}</text></svg>`;
+        `<text x='14' y='138' font-family='Inter, sans-serif' font-size='23' font-weight='700' ` +
+        `fill='#0f172a' fill-opacity='0.085'>${teks}</text></svg>`;
 
     return { backgroundImage: `url("data:image/svg+xml,${encodeURIComponent(svg)}")` };
 });

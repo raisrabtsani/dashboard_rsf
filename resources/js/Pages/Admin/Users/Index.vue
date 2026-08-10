@@ -2,7 +2,7 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import LoadingOverlay from '@/Components/LoadingOverlay.vue';
 import SortArrow from '@/Components/SortArrow.vue';
-import { Head, usePage } from '@inertiajs/vue3';
+import { Head, Link, usePage } from '@inertiajs/vue3';
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import {
     fetchUkerPerCabang,
@@ -11,6 +11,7 @@ import {
     perbaruiUser,
     simpanUser,
     toggleKunci,
+    uploadUsers,
 } from '@/services/adminUserApi';
 import { useTableSort } from '@/utils/useTableSort';
 
@@ -24,6 +25,9 @@ const users = ref([]);
 const statistik = ref({ total: 0, admin: 0, terkunci: 0, per_tipe: {} });
 const memuat = ref(false);
 const pesan = ref(null);
+const berkasImport = ref(null);
+const inputImport = ref(null);
+const mengimpor = ref(false);
 
 const filter = reactive({ cari: '', cabang_id: null, tipe: null });
 
@@ -174,6 +178,31 @@ async function resetFilter() {
     await muat();
 }
 
+async function imporUser() {
+    if (!berkasImport.value) {
+        lapor('Pilih file CSV atau Excel terlebih dahulu.', 'gagal');
+        return;
+    }
+
+    mengimpor.value = true;
+    try {
+        const hasil = await uploadUsers(berkasImport.value);
+        lapor(hasil.message);
+        berkasImport.value = null;
+        if (inputImport.value) inputImport.value.value = '';
+        await muat();
+    } catch (e) {
+        lapor(
+            e?.response?.data?.message
+                ?? e?.response?.data?.errors?.berkas?.[0]
+                ?? 'Import user gagal.',
+            'gagal',
+        );
+    } finally {
+        mengimpor.value = false;
+    }
+}
+
 onMounted(muat);
 </script>
 
@@ -197,10 +226,19 @@ onMounted(muat);
                     </div>
                 </div>
 
-                <button class="user-header__add" type="button" @click="bukaBaru">
-                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
-                    Tambah User
-                </button>
+                <div class="flex flex-wrap items-center justify-end gap-2">
+                    <Link
+                        :href="route('admin.index')"
+                        class="inline-flex min-h-[2.65rem] items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-blue-200 hover:text-blue-700"
+                    >
+                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m15 18-6-6 6-6" /></svg>
+                        Kembali ke Admin
+                    </Link>
+                    <button class="user-header__add" type="button" @click="bukaBaru">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+                        Tambah User
+                    </button>
+                </div>
             </div>
         </template>
 
@@ -280,6 +318,43 @@ onMounted(muat);
                             <small>Perlu ditinjau</small>
                         </div>
                     </article>
+                </section>
+
+                <section class="relative mt-4 overflow-hidden rounded-2xl bg-gradient-to-r from-[#0758bd] via-[#0d68d2] to-[#2b86e8] p-5 text-white shadow-lg shadow-blue-900/10 sm:p-6">
+                    <div class="pointer-events-none absolute -right-16 -top-20 h-52 w-52 rounded-full bg-white/10" />
+                    <div class="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                        <div>
+                            <p class="text-[10px] font-bold uppercase tracking-[0.18em] text-blue-100">Import Manajemen User</p>
+                            <h3 class="mt-1 text-lg font-extrabold">Tambah atau perbarui user secara massal</h3>
+                            <p class="mt-1 max-w-2xl text-xs leading-5 text-blue-100">
+                                Format: id_region, id_cabang, id_uker, User, Nama, Type Uker, Role, Password. Password akun lama tidak ditimpa.
+                            </p>
+                        </div>
+                        <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+                            <a
+                                :href="route('admin.users.template')"
+                                class="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-white/25 bg-white/10 px-4 text-xs font-bold text-white transition hover:bg-white/20"
+                            >
+                                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" /></svg>
+                                Unduh Template
+                            </a>
+                            <input
+                                ref="inputImport"
+                                type="file"
+                                accept=".csv,.txt,.xlsx,.xls"
+                                class="max-w-full rounded-xl bg-white/10 text-xs text-white file:mr-3 file:rounded-xl file:border-0 file:bg-white file:px-4 file:py-2.5 file:text-xs file:font-bold file:text-blue-700"
+                                @change="berkasImport = $event.target.files?.[0] ?? null"
+                            />
+                            <button
+                                type="button"
+                                class="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-white px-5 text-xs font-extrabold text-blue-700 shadow-lg transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+                                :disabled="!berkasImport || mengimpor"
+                                @click="imporUser"
+                            >
+                                {{ mengimpor ? 'Mengimpor…' : 'Import User' }}
+                            </button>
+                        </div>
+                    </div>
                 </section>
 
                 <section class="user-filter-panel">

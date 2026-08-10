@@ -5,6 +5,7 @@ namespace Tests\Feature\Admin;
 use App\Models\User;
 use Database\Seeders\MasterSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
@@ -258,5 +259,63 @@ class UserManagementTest extends TestCase
         $korban = User::factory()->create();
         $this->actingAs($ro)->patchJson("/admin/users/{$korban->id}/toggle-lock")->assertForbidden();
         $this->assertFalse($korban->fresh()->is_locked);
+    }
+
+    // --- Import massal ---------------------------------------------------
+
+    public function test_admin_bisa_import_user_dari_format_yang_diumumkan(): void
+    {
+        $csv = implode("\n", [
+            'id_region,id_cabang,id_uker,User,Nama,Type Uker,Role,Password',
+            '317,319,842,USRIMPORT,User Hasil Import,UNIT,User,rahasia123',
+        ]);
+
+        $this->actingAs($this->admin())
+            ->post('/admin/users/upload', [
+                'berkas' => UploadedFile::fake()->createWithContent('user.csv', $csv),
+            ])
+            ->assertOk()
+            ->assertJsonPath('hasil.baru', 1);
+
+        $user = User::query()->where('username', 'USRIMPORT')->sole();
+        $this->assertSame(319, $user->cabang_id);
+        $this->assertSame(842, $user->uker_id);
+        $this->assertTrue(Hash::check('rahasia123', $user->password));
+    }
+
+    public function test_import_memvalidasi_relasi_kantor_dan_tidak_menimpa_password_lama(): void
+    {
+        $lama = User::factory()->create([
+            'username' => 'USRLAMA',
+            'password' => Hash::make('password-pilihan-user'),
+        ]);
+
+        $csvValid = implode("\n", [
+            'id_region,id_cabang,id_uker,User,Nama,Type Uker,Role,Password',
+            '317,319,842,USRLAMA,Nama Diperbarui,UNIT,User,password-dari-file',
+        ]);
+
+        $this->actingAs($this->admin())
+            ->post('/admin/users/upload', [
+                'berkas' => UploadedFile::fake()->createWithContent('user.csv', $csvValid),
+            ])
+            ->assertOk()
+            ->assertJsonPath('hasil.diperbarui', 1);
+
+        $this->assertSame('Nama Diperbarui', $lama->fresh()->name);
+        $this->assertTrue(Hash::check('password-pilihan-user', $lama->fresh()->password));
+
+        $csvSalah = implode("\n", [
+            'id_region,id_cabang,id_uker,User,Nama,Type Uker,Role,Password',
+            '317,319,999999,USRSALAH,Relasi Salah,UNIT,User,rahasia123',
+        ]);
+
+        $this->actingAs($this->admin())
+            ->post('/admin/users/upload', [
+                'berkas' => UploadedFile::fake()->createWithContent('user.csv', $csvSalah),
+            ])
+            ->assertStatus(422);
+
+        $this->assertDatabaseMissing('users', ['username' => 'USRSALAH']);
     }
 }

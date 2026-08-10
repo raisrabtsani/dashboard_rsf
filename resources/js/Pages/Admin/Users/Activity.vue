@@ -1,7 +1,7 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import LoadingOverlay from '@/Components/LoadingOverlay.vue';
-import { Head } from '@inertiajs/vue3';
+import { Head, Link } from '@inertiajs/vue3';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { fetchAktivitas } from '@/services/adminActivityApi';
 
@@ -89,12 +89,18 @@ onUnmounted(() => {
                     </div>
                 </div>
 
-                <button class="activity-refresh" :disabled="memuat" type="button" @click="muat()">
-                    <svg :class="{ 'activity-refresh__spin': memuat }" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5" />
-                    </svg>
-                    <span>{{ memuat ? 'Memuat…' : 'Segarkan' }}</span>
-                </button>
+                <div class="flex flex-wrap items-center justify-end gap-2">
+                    <Link :href="route('admin.index')" class="inline-flex min-h-[2.65rem] items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-blue-200 hover:text-blue-700">
+                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m15 18-6-6 6-6" /></svg>
+                        Kembali ke Admin
+                    </Link>
+                    <button class="activity-refresh" :disabled="memuat" type="button" @click="muat()">
+                        <svg :class="{ 'activity-refresh__spin': memuat }" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5" />
+                        </svg>
+                        <span>{{ memuat ? 'Memuat…' : 'Segarkan' }}</span>
+                    </button>
+                </div>
             </div>
         </template>
 

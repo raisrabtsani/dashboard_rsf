@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Sesi Habis</title>
+    <base target="_top">
     <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <style>
@@ -16,11 +17,11 @@
             place-items: center;
             padding: 24px;
             font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            color: #e8f0ff;
+            color: #12315f;
             background:
-                radial-gradient(circle at 18% 14%, rgba(46, 124, 255, 0.26), transparent 30%),
-                radial-gradient(circle at 84% 82%, rgba(29, 204, 255, 0.16), transparent 28%),
-                linear-gradient(145deg, #07142b 0%, #0a1d3d 100%);
+                radial-gradient(circle at 15% 12%, rgba(33, 111, 230, 0.16), transparent 31%),
+                radial-gradient(circle at 87% 84%, rgba(76, 201, 240, 0.18), transparent 29%),
+                linear-gradient(145deg, #eef6ff 0%, #f8fbff 52%, #eaf4ff 100%);
         }
 
         .card {
@@ -29,9 +30,9 @@
             overflow: hidden;
             padding: 30px;
             border-radius: 26px;
-            border: 1px solid rgba(151, 177, 224, 0.16);
-            background: linear-gradient(180deg, rgba(15, 35, 72, 0.94), rgba(10, 27, 59, 0.94));
-            box-shadow: 0 28px 70px rgba(0, 8, 26, 0.42);
+            border: 1px solid #d8e7f8;
+            background: rgba(255, 255, 255, 0.96);
+            box-shadow: 0 28px 70px rgba(37, 89, 154, 0.18);
             text-align: center;
         }
 
@@ -43,7 +44,8 @@
             right: -70px;
             top: -80px;
             border-radius: 999px;
-            background: rgba(71, 131, 255, 0.12);
+            background: rgba(37, 112, 220, 0.08);
+            pointer-events: none;
         }
 
         .badge {
@@ -53,9 +55,9 @@
             gap: 8px;
             padding: 8px 12px;
             border-radius: 999px;
-            border: 1px solid rgba(74, 139, 255, 0.28);
-            background: rgba(74, 139, 255, 0.09);
-            color: #cfe0ff;
+            border: 1px solid #c9dcf5;
+            background: #eff6ff;
+            color: #1d5fb8;
             font-size: 11px;
             font-weight: 800;
             letter-spacing: 0.16em;
@@ -67,8 +69,8 @@
             width: 8px;
             height: 8px;
             border-radius: 999px;
-            background: #52b8ff;
-            box-shadow: 0 0 0 5px rgba(82, 184, 255, 0.12);
+            background: #2580dc;
+            box-shadow: 0 0 0 5px rgba(37, 128, 220, 0.12);
         }
 
         .icon {
@@ -79,8 +81,8 @@
             display: grid;
             place-items: center;
             border-radius: 22px;
-            background: linear-gradient(145deg, #2c75f5, #3998ff);
-            box-shadow: 0 18px 36px rgba(30, 99, 220, 0.34);
+            background: linear-gradient(145deg, #1768c7, #39a7ee);
+            box-shadow: 0 18px 36px rgba(30, 99, 180, 0.24);
         }
 
         .icon svg { width: 36px; height: 36px; }
@@ -96,7 +98,7 @@
         p {
             position: relative;
             margin: 0;
-            color: #9fb2d8;
+            color: #627b9d;
             font-size: 14px;
             line-height: 1.75;
         }
@@ -109,16 +111,18 @@
             margin-top: 18px;
             padding: 8px 12px;
             border-radius: 12px;
-            background: rgba(255, 255, 255, 0.05);
-            color: #b9cae9;
+            border: 1px solid #deebf8;
+            background: #f5f9fe;
+            color: #6680a2;
             font-size: 12px;
             font-weight: 700;
         }
 
-        .status strong { color: #ffffff; }
+        .status strong { color: #1c5da9; }
 
         .actions {
             position: relative;
+            z-index: 2;
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 12px;
@@ -138,6 +142,7 @@
             font-weight: 800;
             text-decoration: none;
             cursor: pointer;
+            pointer-events: auto;
             transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
         }
 
@@ -150,15 +155,15 @@
         }
 
         .btn-secondary {
-            color: #e7efff;
-            background: rgba(255, 255, 255, 0.06);
-            border: 1px solid rgba(151, 177, 224, 0.15);
+            color: #245e9e;
+            background: #f1f7fd;
+            border: 1px solid #cfe0f2;
         }
 
         .note {
             margin-top: 16px;
             font-size: 12px;
-            color: #7890bc;
+            color: #8397b1;
         }
 
         @media (max-width: 520px) {
@@ -176,7 +181,7 @@
     @endphp
 
     <main class="card" role="alert" aria-live="assertive">
-        <span class="badge">Session Expired</span>
+        <span class="badge">Sesi Berakhir</span>
 
         <div class="icon" aria-hidden="true">
             <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -196,13 +201,11 @@
                 class="btn btn-primary"
                 href="{{ $refreshUrl }}"
                 target="_top"
-                onclick="window.top.location.assign(this.href); return false;"
             >Refresh Halaman</a>
             <a
                 class="btn btn-secondary"
                 href="{{ route('session.expired.login') }}"
                 target="_top"
-                onclick="window.top.location.assign(this.href); return false;"
             >Login Ulang</a>
         </div>
 

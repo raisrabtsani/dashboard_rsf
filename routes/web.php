@@ -396,6 +396,8 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
     Route::prefix('users')->name('users.')->group(function () {
         Route::get('/', [UserController::class, 'index'])->name('index');
         Route::get('data', [UserController::class, 'data'])->name('data');
+        Route::get('template', [UserController::class, 'template'])->name('template');
+        Route::post('upload', [UserController::class, 'upload'])->name('upload');
         Route::get('uker/{cabangId}', [UserController::class, 'uker'])->name('uker');
         Route::post('/', [UserController::class, 'store'])->name('store');
         Route::put('{user}', [UserController::class, 'update'])->name('update');

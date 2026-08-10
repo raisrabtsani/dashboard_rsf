@@ -25,3 +25,10 @@ export const hapusUser = (id) =>
 
 export const toggleKunci = (id) =>
     axios.patch(route('admin.users.toggle-lock', { user: id })).then((r) => r.data);
+
+export const uploadUsers = (berkas) => {
+    const form = new FormData();
+    form.append('berkas', berkas);
+
+    return axios.post(route('admin.users.upload'), form).then((r) => r.data);
+};
